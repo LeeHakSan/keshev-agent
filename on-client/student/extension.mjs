@@ -738,6 +738,112 @@ function aiExplanationView(input) {
   return root;
 }
 
+// ---------- 19단계: AI 조치 제안과 연동 시스템 처리 결과 (renderAction) ----------
+// 조치 제안·사람 확인·서버 접수(ACK)·실제 효과 확인은 서로 다른 단계입니다. 이 화면은 버튼과 요청을 만들지 않고 받은 상태만 보여 줍니다.
+const ACTION_STATUS_TEXT = Object.freeze({
+  idle: '아직 미실행(idle)',
+  loading: '조치 준비 또는 결과 조회 중(loading)',
+  prepared: '준비됨 · 미실행(prepared)',
+  executing: '서버에 전달 중(executing)',
+  pending: '서버 접수·처리 중(pending)',
+  denied: '연동 시스템 거절(denied)',
+  failed: '연동 시스템 실패(failed)',
+  unknown: '결과 불명(unknown)',
+  expired: '확인 기한 지남(expired)',
+  error: '요청 처리 안 됨(error)',
+});
+const ACTION_STATUS_NOTE = Object.freeze({
+  idle: '조치 준비 버튼이 보이지 않는 것은 정상일 수 있습니다. 기록의 지원 조치(supportedActions)가 비어 있으면 연동 시스템이 지원하는 조치가 없어 실제 처리 경로가 열리지 않습니다.',
+  loading: '결과가 아직 확인되지 않았습니다.',
+  prepared: '아직 서버에 전달하지 않았습니다. 사람이 아래 대상과 조치를 확인한 뒤 제공 화면의 「대상과 조치를 확인했으며 집행합니다」 버튼을 직접 눌러야 전달됩니다.',
+  executing: '결과가 아직 없습니다. 효과는 확인되지 않았습니다.',
+  pending: '서버가 요청을 받았다는 표시(ACK)일 뿐 효과를 확인한 것이 아닙니다. 결과가 아직 확인되지 않았습니다. 제공 화면의 「연동 시스템 결과만 재조회」로 결과만 다시 조회하세요.',
+  denied: '연동 시스템이 이 조치를 허용하지 않았습니다. 효과가 적용되지 않았습니다.',
+  failed: '연동 시스템이 조치를 처리하지 못했습니다. 효과가 확인되지 않았습니다.',
+  unknown: '성공으로도 효과 없음으로도 판단하지 않습니다. 이미 전달된 조치일 수 있으니 제공 화면의 「연동 시스템 결과만 재조회」로 결과만 다시 조회하세요.',
+  expired: '이번 준비로는 집행할 수 없습니다. 현재 기록에서 조치를 다시 준비하고 대상을 확인하세요.',
+  error: '요청이 처리되지 않았습니다. 아래 오류 코드와 메시지를 확인하세요.',
+});
+const ACTION_SCREEN_NOTE = '조치 준비·집행·결과 재조회·조치 화면 취소는 제공 화면의 버튼으로 합니다. 이 화면은 조치를 요청하지 않으며, 「조치 화면 취소」도 이미 서버에 전달된 조치 효과를 되돌리지 않습니다.';
+
+function actionValue(value, max = 200) {
+  return statusSafe(value, max);
+}
+
+// 효과 확인은 succeeded 이면서 observation.effectApplied === true, 관측 시각, receiptId 가 모두 있을 때만 입니다.
+function actionConfirmed(input, receipt) {
+  const observation = input.observation !== null && typeof input.observation === 'object' ? input.observation : null;
+  return input.status === 'succeeded' && observation !== null && observation.effectApplied === true
+    && actionValue(observation.observedAt) !== null && actionValue(receipt?.receiptId) !== null;
+}
+
+function actionView(input) {
+  const s = input !== null && typeof input === 'object' ? input : {};
+  const status = typeof s.status === 'string' && Object.hasOwn(ACTION_STATUS_TEXT, s.status) ? s.status : s.status === 'succeeded' ? 'succeeded' : null;
+  const event = s.event !== null && typeof s.event === 'object' ? s.event : null;
+  const receipt = s.receipt !== null && typeof s.receipt === 'object' ? s.receipt : null;
+  const target = s.target !== null && typeof s.target === 'object' ? s.target : null;
+  const observation = s.observation !== null && typeof s.observation === 'object' ? s.observation : null;
+  const eventId = actionValue(event?.id);
+  const actionId = actionValue(s.actionId);
+  const requestId = actionValue(receipt?.requestId);
+  const root = identityNode('section', undefined, 'student-action');
+  root.setAttribute('aria-label', '조치 상태');
+
+  // 접수 정보가 현재 사건·조치와 다르면 그 결과를 쓰지 않습니다.
+  const mismatch = receipt !== null && ((receipt.eventId !== undefined && actionValue(receipt.eventId) !== eventId)
+    || (receipt.actionId !== undefined && actionValue(receipt.actionId) !== actionId));
+  const confirmed = !mismatch && actionConfirmed(s, receipt);
+  // succeeded 인데 효과를 확인하지 못했거나 알 수 없는 상태값이면 결과 불명으로 처리합니다.
+  const shown = mismatch || status === null || (status === 'succeeded' && !confirmed) ? 'unknown' : status;
+
+  let headline = confirmed ? '효과 확인(succeeded)' : ACTION_STATUS_TEXT[shown];
+  let note = confirmed ? '연동 시스템이 효과를 관측했습니다.' : ACTION_STATUS_NOTE[shown];
+  if (mismatch) note = '확인 불가: 받은 접수 정보가 현재 사건·조치와 맞지 않아 이 결과를 쓰지 않습니다. ' + ACTION_STATUS_NOTE.unknown;
+  else if (status === null) note = `확인 불가: 알 수 없는 상태값입니다. ${ACTION_STATUS_NOTE.unknown}`;
+  else if (status === 'succeeded' && !confirmed) note = `연동 시스템 관측으로 효과 적용(effectApplied: true)을 확인하지 못해 효과 확인으로 표시하지 않습니다. ${ACTION_STATUS_NOTE.unknown}`;
+  root.append(identityNode('p', `조치 상태: ${headline}`, confirmed ? 'student-action-confirmed' : 'student-action-status'));
+  root.append(identityNode('p', note, 'student-action-note'));
+
+  const message = actionValue(s.message, 300);
+  if (message !== null && message !== '') root.append(identityNode('p', `서버 메시지: ${message}`, 'student-action-message'));
+  if (s.error !== null && typeof s.error === 'object') {
+    root.append(identityNode('p', `오류 코드(error.code): ${aiSafeCode(s.error) ?? '확인 불가'}`, 'student-action-error'));
+    root.append(identityNode('p', `오류 메시지(error.message): ${actionValue(s.error.message, 300) ?? '서버가 메시지를 보내지 않았습니다.'}`, 'student-action-error'));
+  }
+
+  // 받은 범위에서만 표시합니다. 확인 번호(confirmationId)는 입력에서 읽지도 보관하지도 않습니다.
+  const list = identityNode('dl');
+  const row = (label, value) => { if (value !== null && value !== undefined && value !== '') decisionRow(list, label, String(value)); };
+  row('사건 ID(event.id)', eventId);
+  const evidenceIds = Array.isArray(event?.evidence) ? event.evidence.map((e) => actionValue(e?.id)).filter((id) => id !== null) : [];
+  if (evidenceIds.length > 0) row('근거 ID(evidence)', evidenceIds.join(', '));
+  row('조치(actionId)', actionId);
+  row('실제 대상(target.id)', actionValue(target?.id));
+  row('대상 세대(target.generation)', actionValue(target?.generation));
+  row('요청 ID(requestId)', requestId);
+  row('접수증 ID(receiptId)', actionValue(receipt?.receiptId));
+  row('버전(version)', actionValue(receipt?.version));
+  if (shown === 'prepared' || shown === 'expired') row('사람 확인 기한(confirmationExpiresAt)', s.confirmationExpiresAt === undefined || s.confirmationExpiresAt === null ? null : decisionTime(s.confirmationExpiresAt));
+  if (confirmed) {
+    row('관측 시각(observedAt)', decisionTime(observation.observedAt));
+    row('실제 효과(effectApplied)', 'true');
+  }
+  if (list.children.length > 0) root.append(list);
+
+  if (receipt?.replayed === true) root.append(identityNode('p', '같은 요청의 결과를 다시 돌려준 응답입니다(replayed: true). 새로 집행한 것이 아닙니다.', 'student-action-note'));
+  if (receipt?.superseded === true) root.append(identityNode('p', '이전 조회는 최신 결과를 대신하지 않습니다(superseded).', 'student-action-note'));
+  root.append(identityNode('p', ACTION_SCREEN_NOTE, 'student-action-note'));
+
+  // 속성은 현재 사건에 묶인 정상 상태(준비·전달 중·접수·효과 확인)를 그렸을 때만 붙입니다. 실패·불명·만료·오류·idle 에는 붙이지 않습니다.
+  const drawn = !mismatch && (confirmed || ['prepared', 'executing', 'pending'].includes(shown));
+  if (drawn && eventId !== null && requestId !== null) {
+    root.setAttribute('data-student-action-event', eventId);
+    root.setAttribute('data-student-action-request', requestId);
+  }
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity(input) {
@@ -841,6 +947,6 @@ export function createStudentView() {
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection(input) { return aiConnectionView(input); },
     renderExplanation(input) { return aiExplanationView(input); },
-    renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
+    renderAction(input) { return actionView(input); },
   };
 }
