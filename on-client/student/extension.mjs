@@ -844,6 +844,155 @@ function actionView(input) {
   return root;
 }
 
+// ---------- 20단계: 설치 패키지 버전과 알려진 취약점(OSV) 조회 결과 (renderVulnerabilities) ----------
+// 조회 실패·미조회는 "취약점 없음"이 아닙니다. 조회 결과가 없다는 사실만으로 패키지나 앱이 안전하다고 보장할 수 없습니다.
+const VULN_SCAN_TEXT = Object.freeze({
+  complete: ['모두 조회(complete)', '조회 대상 패키지를 모두 조회했습니다.'],
+  partial: ['일부 조회 실패(partial)', '일부 패키지는 조회하지 못했습니다. 조회하지 못한 패키지는 취약점이 없다는 뜻이 아닙니다. 이미 받은 취약점 ID는 그대로 보여 줍니다.'],
+  not_checked: ['아직 조회 안 함(not_checked)', '승인된 공개 조회 대상 패키지가 없어 조회하지 않았습니다. 조회 대상은 운영자가 준비합니다.'],
+  not_configured: ['조회 준비 미완료(not_configured)', '조회 대상 프로젝트 설정이 필요해 조회하지 않았습니다. 설정은 운영자가 준비하며 이 화면에서 바꾸지 않습니다.'],
+  unverifiable: ['lock 파일 확인 불가(unverifiable)', 'package-lock.json 을 확인할 수 없어 조회하지 않았습니다.'],
+});
+const VULN_PACKAGE_TEXT = Object.freeze({
+  known_vulnerabilities: '알려진 항목 있음(known_vulnerabilities)',
+  none_found: '알려진 항목 없음(none_found)',
+});
+const VULN_MODE_NOTICE = Object.freeze({
+  demo: '예제 자료(demo): 실제 프로젝트의 조회 결과가 아닙니다.',
+  disconnected: '연결 없음(disconnected): 서버에 연결되어 있지 않습니다.',
+  unknown: '확인 불가(unknown): 연결 상태를 확인할 수 없습니다.',
+});
+const VULN_ERROR_GUIDE = Object.freeze({
+  CANCELLED: '조회를 취소했습니다. 이전 결과는 현재 확인 결과가 아닙니다.',
+  REQUEST_CANCELLED: '조회를 취소했습니다. 이전 결과는 현재 확인 결과가 아닙니다.',
+  TIMEOUT: '조회 응답이 늦어 중단했습니다. 잠시 뒤 직접 다시 조회하세요.',
+  REQUEST_TIMEOUT: '조회 응답이 늦어 중단했습니다. 잠시 뒤 직접 다시 조회하세요.',
+  SERVICE_UNAVAILABLE: '지금은 조회를 처리할 수 없습니다. 잠시 뒤 직접 다시 조회하세요.',
+  CONTRACT_MISMATCH: '조회 응답 형식을 확인할 수 없어 결과를 표시하지 않습니다.',
+});
+const VULN_NOT_SAFE = '조회 결과가 없다는 사실만으로 해당 패키지나 앱 전체가 안전하다고 보장할 수 없습니다. OSV는 알려진 취약점 데이터베이스입니다.';
+const VULN_HASH = /^[0-9a-f]{64}$/u;
+const VULN_EXACT_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u;
+
+function vulnTime(value) {
+  const text = identityText(value);
+  return text === null ? '확인 불가' : decisionTime(text);
+}
+
+function vulnFindings(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const item of list) {
+    const id = statusSafe(item?.id, 160);
+    const modified = identityText(item?.modified);
+    if (id === null || modified === null) return null;
+    out.push({ id, modified });
+  }
+  return out;
+}
+
+function vulnPackageRow(pkg) {
+  const row = identityNode('tr');
+  const name = statusSafe(pkg?.name, 214);
+  const versionText = identityText(pkg?.version);
+  const exact = versionText !== null && VULN_EXACT_VERSION.test(versionText);
+  if (name !== null) row.setAttribute('data-student-package-name', name);
+  // 버전 범위(^1.2.0 등)나 형식이 틀린 값은 설치 버전으로 표시하지 않습니다.
+  if (exact) row.setAttribute('data-student-package-version', versionText);
+  const findings = vulnFindings(pkg?.vulnerabilities);
+  const found = findings !== null && findings.length > 0;
+  let statusText;
+  if (pkg?.status === 'known_vulnerabilities' && found) statusText = VULN_PACKAGE_TEXT.known_vulnerabilities;
+  else if (pkg?.status === 'none_found' && findings !== null && findings.length === 0) statusText = `${VULN_PACKAGE_TEXT.none_found} · 조회 범위(OSV, 조회 시각 기준)에서 알려진 항목이 없다는 뜻이며 안전을 보장하지 않습니다.`;
+  else if (pkg?.status === 'unverifiable') statusText = found ? '일부 확인 · 전체 조회 확인 불가(unverifiable)' : '조회 확인 불가(unverifiable) · 취약점이 없다는 뜻이 아닙니다.';
+  else statusText = '확인 불가 · 조회 상태를 읽을 수 없습니다. 취약점이 없다는 뜻이 아닙니다.';
+  const idCell = identityNode('td');
+  if (found) {
+    const ul = identityNode('ul');
+    for (const f of findings) ul.append(identityNode('li', `${f.id} · 수정 시각(modified): ${decisionTime(f.modified)}`));
+    idCell.append(ul);
+  } else idCell.append(identityNode('span', pkg?.status === 'none_found' ? '알려진 항목 없음' : '받은 항목 없음'));
+  const cells = [
+    name ?? '확인 불가',
+    exact ? versionText : '설치 버전 확인 불가',
+    statusText,
+  ];
+  for (const text of cells) row.append(identityNode('td', text));
+  row.append(idCell);
+  row.append(identityNode('td', statusSafe(pkg?.source, 200) ?? '확인 불가'));
+  row.append(identityNode('td', vulnTime(pkg?.checkedAt)));
+  return row;
+}
+
+function vulnPackageTable(packages) {
+  const table = identityNode('table');
+  table.setAttribute('aria-label', '설치 패키지별 조회 결과');
+  const head = identityNode('thead');
+  const headRow = identityNode('tr');
+  for (const label of ['패키지', '설치 버전(lock 기준)', '조회 상태', '취약점 ID · 수정 시각', '출처', '패키지 조회 시각']) headRow.append(identityNode('th', label));
+  head.append(headRow);
+  table.append(head);
+  const body = identityNode('tbody');
+  for (const pkg of packages) body.append(vulnPackageRow(pkg));
+  table.append(body);
+  return table;
+}
+
+// 호출마다 새로 만들어서 조회 중·오류·다시 조회 뒤에 이전 표가 남지 않습니다.
+function vulnerabilitiesView(input) {
+  const { status, mode, data, error } = input !== null && typeof input === 'object' ? input : {};
+  const root = identityNode('section', undefined, 'student-vulnerabilities');
+  root.setAttribute('aria-label', '설치 패키지 취약점 조회 결과');
+  if (typeof mode === 'string' && Object.hasOwn(VULN_MODE_NOTICE, mode)) root.append(identityNode('p', VULN_MODE_NOTICE[mode], 'student-vuln-mode'));
+
+  if (status === 'idle') {
+    root.append(identityNode('p', '조회 전', 'student-vuln-idle'));
+    root.append(identityNode('p', '아직 조회하지 않았습니다. 제공 화면의 「설치 패키지 조회」 버튼을 직접 눌러 조회합니다. 조회하지 않은 것은 취약점이 없다는 뜻이 아닙니다.', 'student-vuln-note'));
+    return root;
+  }
+  if (status === 'loading') {
+    root.append(identityNode('p', '조회 중', 'student-vuln-loading'));
+    root.append(identityNode('p', '이전 결과는 현재 결과가 아니므로 표시하지 않습니다.', 'student-vuln-note'));
+    return root;
+  }
+  if (status === 'error') {
+    const code = aiSafeCode(error);
+    root.append(identityNode('p', `조회 실패: ${statusSafe(error?.message, 300) ?? '서버가 메시지를 보내지 않았습니다.'}`, 'student-vuln-error'));
+    root.append(identityNode('p', `오류 코드(error.code): ${code ?? '확인 불가'}`, 'student-vuln-code'));
+    if (code !== null && Object.hasOwn(VULN_ERROR_GUIDE, code)) root.append(identityNode('p', VULN_ERROR_GUIDE[code], 'student-vuln-guide'));
+    root.append(identityNode('p', '조회 실패는 취약점이 없다는 뜻이 아닙니다. 이전 결과는 현재 결과로 표시하지 않습니다. 다시 조회는 제공 화면의 「설치 패키지 조회」 버튼을 직접 누르세요.', 'student-vuln-note'));
+    return root;
+  }
+
+  const scan = status === 'ok' && data !== null && typeof data === 'object' && typeof data.status === 'string' && Object.hasOwn(VULN_SCAN_TEXT, data.status) ? data : null;
+  if (scan === null) {
+    root.append(identityNode('p', '확인 불가: 조회 결과를 읽을 수 없습니다.', 'student-vuln-unverified'));
+    root.append(identityNode('p', '취약점이 없다는 뜻이 아닙니다. 제공 화면의 「설치 패키지 조회」 버튼으로 직접 다시 조회하세요.', 'student-vuln-note'));
+    return root;
+  }
+  const [label, meaning] = VULN_SCAN_TEXT[scan.status];
+  root.append(identityNode('p', `조회 상태: ${label}`, 'student-vuln-status'));
+  root.append(identityNode('p', meaning, 'student-vuln-note'));
+
+  // 전달된 값만 보여 줍니다. 해시는 64자리 16진수일 때만 그대로 보여 줍니다.
+  const list = identityNode('dl');
+  if (scan.lockfileVersion !== undefined) decisionRow(list, 'lockfileVersion', identityText(String(scan.lockfileVersion)) ?? '확인 불가');
+  if (scan.lockfileHash !== undefined) decisionRow(list, 'lockfileHash', typeof scan.lockfileHash === 'string' && VULN_HASH.test(scan.lockfileHash) ? scan.lockfileHash : '확인 불가');
+  if (scan.checkedAt !== undefined) decisionRow(list, '조회 시각(checkedAt)', vulnTime(scan.checkedAt));
+  if (scan.excluded !== null && typeof scan.excluded === 'object' && Number.isSafeInteger(scan.excluded.count)) decisionRow(list, '조회에서 제외된 패키지', `${scan.excluded.count}건 · 제외된 패키지는 조회하지 않았습니다.`);
+  if (list.children.length > 0) root.append(list);
+
+  const packages = Array.isArray(scan.packages) ? scan.packages : [];
+  if (packages.length === 0) {
+    root.append(identityNode('p', scan.status === 'complete' ? '조회한 패키지가 없습니다.' : '조회한 패키지가 없어 표시할 결과가 없습니다. 조회하지 않은 것은 취약점이 없다는 뜻이 아닙니다.', 'student-vuln-empty'));
+  } else {
+    root.append(identityNode('p', '설치 버전은 package-lock.json 과 설치된 node_modules 의 메타데이터를 대조한 정확한 버전이며, ^1.2.0 같은 버전 범위가 아닙니다.', 'student-vuln-note'));
+    root.append(vulnPackageTable(packages));
+  }
+  root.append(identityNode('p', VULN_NOT_SAFE, 'student-vuln-note'));
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity(input) {
@@ -944,7 +1093,7 @@ export function createStudentView() {
     },
     renderEvents(input) { return eventsView(input); },
     renderStatus(input) { return statusView(input); },
-    renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
+    renderVulnerabilities(input) { return vulnerabilitiesView(input); },
     renderAiConnection(input) { return aiConnectionView(input); },
     renderExplanation(input) { return aiExplanationView(input); },
     renderAction(input) { return actionView(input); },
