@@ -80,6 +80,35 @@ function identityNamed(item) {
   return label ?? id ?? '확인 불가';
 }
 
+// ---------- 14단계: 업무 앱 접근 요청 결과 표시 (renderDecision 에서만 씁니다) ----------
+// 판정은 한국어 뜻과 서버가 준 원래 값(코드)을 함께 보여 줍니다. 네 값이 아니면 확인 불가로 둡니다.
+const DECISION_TEXT = Object.freeze({
+  allow: { label: '접근 허용(allow)', note: '정책상 접근이 허용된다는 판정입니다. 실제 앱 접속 성공을 보장하지 않습니다.' },
+  deny: { label: '접근 거부(deny)', note: '정책상 접근이 거부되었습니다.' },
+  challenge: { label: '추가 확인 필요(challenge)', note: '추가 인증 또는 확인이 필요합니다. 이 앱이 추가 인증을 대신 수행하지 않습니다.' },
+  unknown: { label: '판정 확인 불가(unknown)', note: '서버가 판정을 확인하지 못했습니다. 허용으로 간주하지 않습니다.' },
+});
+const DECISION_MODE_NOTICE = Object.freeze({
+  demo: '예제 자료(demo): 실제 접근 판정이 아닙니다.',
+  disconnected: '연결 없음(disconnected): 서버에 연결되어 있지 않습니다.',
+  unknown: '확인 불가(unknown): 연결 상태를 확인할 수 없습니다.',
+});
+// 서버 응답 형식을 확인하지 못했다는 뜻의 오류 코드입니다. 이것은 거부도 허용도 아닌 확인 불가입니다.
+const UNVERIFIED_ERROR_CODES = new Set(['CONTRACT_MISMATCH', 'ENGINE_RESULT_UNVERIFIED']);
+
+// 판정 시각은 서버가 준 원래 값을 그대로 적고, 읽을 수 있으면 한국 시각을 괄호로 덧붙입니다.
+function decisionTime(value) {
+  const raw = identityText(value);
+  if (raw === null) return '확인 불가';
+  const time = new Date(raw);
+  if (Number.isNaN(time.getTime())) return raw;
+  return `${raw} (한국 시각 ${time.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false })})`;
+}
+
+function decisionRow(list, term, description) {
+  list.append(identityNode('dt', term), identityNode('dd', description));
+}
+
 export function createStudentView() {
   return {
     renderIdentity(input) {
@@ -126,7 +155,58 @@ export function createStudentView() {
       }));
       return root;
     },
-    renderDecision() { return '학생 구현 대기: 서버의 판정과 이유를 연결하세요.'; },
+    renderDecision(input) {
+      const { status, mode, data, error, appId } = input !== null && typeof input === 'object' ? input : {};
+      const root = identityNode('section', undefined, 'student-decision');
+      root.setAttribute('aria-label', '업무 앱 접근 판정');
+      const asked = identityText(appId);
+      // 연결 방식 안내는 요청 전·요청 중·오류에서도 함께 보여 줍니다.
+      if (typeof mode === 'string' && Object.hasOwn(DECISION_MODE_NOTICE, mode)) {
+        root.append(identityNode('p', DECISION_MODE_NOTICE[mode], 'student-decision-mode'));
+      }
+
+      if (status === 'idle') {
+        root.append(identityNode('p', '앱을 골라 접속을 요청하세요.', 'student-decision-idle'));
+        return root;
+      }
+      if (status === 'loading') {
+        root.append(identityNode('p', `판정 확인 중${asked ? `: ${asked}` : ''}`, 'student-decision-loading'));
+        return root;
+      }
+      if (status === 'error') {
+        // 요청 실패는 거부 판정이 아닙니다. 서버가 판정을 돌려주지 못했다는 뜻이며 허용도 아닙니다.
+        root.append(identityNode('p', `요청 실패: ${identityText(error?.message) ?? '서버가 오류 설명을 보내지 않았습니다.'}`, 'student-decision-error'));
+        root.append(identityNode('p', '이것은 접근 거부(deny) 판정이 아니며, 접근이 허용된 것도 아닙니다. 서버가 판정을 돌려주지 못했습니다.', 'student-decision-note'));
+        if (typeof error?.code === 'string' && UNVERIFIED_ERROR_CODES.has(error.code)) {
+          root.append(identityNode('p', '확인 불가: 서버 응답을 확인하지 못해 판정을 알 수 없습니다.', 'student-decision-unverified'));
+        }
+        if (asked) root.append(identityNode('p', `요청한 앱: ${asked}`));
+        return root;
+      }
+
+      // ok 이거나 알 수 없는 상태: 판정이 정해진 모양일 때만 판정을 보여 주고, 아니면 확인 불가로 둡니다.
+      const valid = status === 'ok' && data !== null && typeof data === 'object';
+      // 선택한 앱과 판정 대상 앱이 둘 다 있고 같을 때만 이 판정을 그 앱의 판정으로 씁니다.
+      const sameApp = valid && asked !== null && identityText(data.appId) === asked;
+      const known = valid && sameApp && typeof data.decision === 'string' && Object.hasOwn(DECISION_TEXT, data.decision);
+      const decision = known ? data.decision : 'unknown';
+      const info = DECISION_TEXT[decision];
+
+      root.append(identityNode('p', `판정: ${info.label}${decision === 'unknown' && valid && typeof data.decision === 'string' && !known ? ` · 서버 값 "${data.decision}"은 알 수 없는 값입니다` : ''}`, `student-decision-label student-decision-${decision}`));
+      root.append(identityNode('p', info.note, 'student-decision-note'));
+      if (valid && !sameApp) {
+        root.append(identityNode('p', `선택한 앱(${asked ?? '없음'})과 판정 대상 앱(${identityText(data.appId) ?? '없음'})이 달라 이 판정을 사용할 수 없습니다.`, 'student-decision-mismatch'));
+      } else if (!valid) {
+        root.append(identityNode('p', '서버 응답을 읽을 수 없습니다.', 'student-decision-unverified'));
+      }
+      const list = identityNode('dl');
+      // 다른 앱의 판정이 오면 그 앱의 이유·시각은 보여 주지 않습니다(선택한 앱의 판정이 아니므로).
+      decisionRow(list, '대상 앱', (sameApp && identityText(data.appId)) || asked || '확인 불가');
+      decisionRow(list, '판정 이유', sameApp ? (identityText(data.reason) ?? '서버가 이유를 보내지 않았습니다.') : '확인 불가');
+      decisionRow(list, '판정 시각', sameApp ? decisionTime(data.checkedAt) : '확인 불가');
+      root.append(list);
+      return root;
+    },
     renderEvents() { return '학생 구현 대기: 본인 접속·XDR 기록을 연결하세요.'; },
     renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
