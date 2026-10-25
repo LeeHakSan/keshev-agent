@@ -42,14 +42,14 @@ keshev-agent/                      ← Git 최상위 (원격: https://github.com
     └── vendor/                    ← 제공 라이브러리
 ```
 
-내 컴퓨터에서의 실제 작업 폴더: `/Users/san/Developer/aleph/aleph-wargame/keshev-agent/on-client`
+저장소를 받은 위치는 사람마다 다릅니다. 아래에서는 저장소를 받은 폴더(예: `git clone` 을 실행한 폴더)를 `<저장소 폴더>` 라고 쓰고, 작업 위치는 `<저장소 폴더>/on-client` 입니다. 절대경로는 문서에 고정하지 않았습니다.
 
 ## 4. 실행·종료·재실행 (macOS 터미널에서 확인한 절차)
 
 1. 터미널(zsh)을 열고 작업 폴더로 이동합니다.
 
    ```sh
-   cd /Users/san/Developer/aleph/aleph-wargame/keshev-agent/on-client
+   cd <저장소 폴더>/on-client
    ```
 
 2. 서버를 켭니다. 둘 중 하나를 씁니다.
