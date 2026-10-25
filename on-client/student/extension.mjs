@@ -595,7 +595,72 @@ function aiConnectionView(input) {
   return root;
 }
 
-// 사건 설명 기초: 성공한 설명에만 data-student-explanation-event 표식을 붙이고, 실패·확인 불가에는 붙이지 않습니다.
+// ---------- 18단계: 근거에 연결된 AI 사건 설명 (renderExplanation) ----------
+const STATUS_STATE_VALUES = Object.freeze({
+  access: Object.freeze({ allowed: 1, denied: 1 }),
+  session: Object.freeze({ active: 1, expired: 1, revoked: 1 }),
+  device: Object.freeze({ compliant: 1, noncompliant: 1 }),
+});
+const EXPLAIN_STATE_NAMES = Object.freeze([['access', '접속'], ['session', '세션'], ['device', '기기']]);
+const EXPLAIN_NO_ACTIONS = '연동 시스템이 지원하는 조치가 없어 제안이 없습니다(정상).';
+const EXPLAIN_NO_PROPOSAL = 'AI 가 제안한 조치가 없습니다.';
+const EXPLAIN_RECORD_KEPT = '기록은 그대로입니다. AI 설명이 실패해도 업무 앱 판정과 보안 기록은 계속 동작하며, 과제 실패가 아닙니다.';
+const EXPLAIN_REFERENCE = 'AI 설명은 참고 정보입니다. 사실 판단은 근거 글과 연동 시스템이 알려 준 상태로 하며, 설명·제안만으로 보안 조치가 실행되지는 않습니다.';
+
+// 설명 안에서 쓰는 id·글 한 줄을 안전하게 읽습니다. 형식이 틀리면 null 입니다.
+function explainRows(list) {
+  if (!Array.isArray(list)) return null;
+  const rows = [];
+  for (const row of list) {
+    const id = identityText(row?.id);
+    const text = statusSafe(row?.text, 500);
+    if (id === null || text === null) return null;
+    rows.push({ id, text });
+  }
+  return rows;
+}
+
+// 설명이 이 기록에 속하는지 검사합니다. 맞지 않으면 사유를 돌려주고, 없는 근거 ID 를 만들어 맞추지 않습니다.
+function explainCheck(event, data) {
+  if (event === null || typeof event !== 'object' || identityText(event.id) === null) return { reason: '선택한 기록을 확인할 수 없습니다.' };
+  const evidence = explainRows(event.evidence);
+  const rules = explainRows(event.rules);
+  if (evidence === null || rules === null) return { reason: '기록의 근거·규칙을 확인할 수 없습니다.' };
+  if (data === null || typeof data !== 'object' || statusSafe(data.summary, 1500) === null || data.summary.trim() === '') return { reason: 'AI 요약을 확인할 수 없습니다.' };
+  if (data.executed !== false) return { reason: 'AI 응답이 조치를 이미 실행했다고 하거나 실행 여부를 확인할 수 없어 쓸 수 없습니다.' };
+  if (data.requiresHumanConfirmation !== true) return { reason: '사람 확인이 필요하다는 표시가 없어 쓸 수 없습니다.' };
+  const known = new Map(evidence.map((row) => [row.id, row.text]));
+  const cited = Array.isArray(data.evidenceIds) ? data.evidenceIds.map((id) => identityText(id)) : [];
+  if (cited.length === 0 || cited.some((id) => id === null) || new Set(cited).size !== cited.length) return { reason: '인용한 근거 ID 를 확인할 수 없습니다.' };
+  const missing = cited.filter((id) => !known.has(id));
+  if (missing.length > 0) return { reason: `근거가 이 기록과 맞지 않습니다. 이 기록에 없는 근거 ID: ${missing.join(', ')}` };
+  const supported = Array.isArray(event.supportedActions) ? event.supportedActions.map((a) => identityText(a)) : null;
+  if (supported === null || supported.includes(null)) return { reason: '기록의 지원 조치를 확인할 수 없습니다.' };
+  if (!Array.isArray(data.proposals)) return { reason: '제안 목록을 확인할 수 없습니다.' };
+  const proposals = [];
+  for (const item of data.proposals) {
+    const action = identityText(item?.action);
+    const reason = statusSafe(item?.reason, 500);
+    const refs = Array.isArray(item?.evidenceIds) ? item.evidenceIds.map((id) => identityText(id)) : [];
+    if (action === null || reason === null || !supported.includes(action) || refs.length === 0 || refs.some((id) => id === null || !known.has(id))) {
+      return { reason: '제안이 이 기록의 지원 조치나 근거와 맞지 않아 쓸 수 없습니다.' };
+    }
+    proposals.push({ action, reason, refs });
+  }
+  return { evidence: cited.map((id) => ({ id, text: known.get(id) })), rules, proposals, supported, summary: statusSafe(data.summary, 1500) };
+}
+
+function explainList(rows, title) {
+  const section = identityNode('section', undefined, 'student-ai-group');
+  section.append(identityNode('h5', title));
+  const list = identityNode('ul');
+  for (const row of rows) list.append(identityNode('li', `${row.id} — ${row.text}`));
+  section.append(list);
+  return section;
+}
+
+// 사건 설명: 성공이고 이 기록의 근거와 맞을 때만 data-student-explanation-event 표식을 붙입니다.
+// 호출마다 새로 만들기 때문에 다른 기록·새로고침·실패 뒤에는 이전 설명과 표식이 남지 않습니다.
 function aiExplanationView(input) {
   const { event, explanation, checkedAt } = input !== null && typeof input === 'object' ? input : {};
   const res = explanation !== null && typeof explanation === 'object' ? explanation : {};
@@ -603,32 +668,73 @@ function aiExplanationView(input) {
   root.setAttribute('aria-label', '사건 AI 설명');
   if (typeof res.mode === 'string' && Object.hasOwn(AI_MODE_NOTICE, res.mode)) root.append(identityNode('p', AI_MODE_NOTICE[res.mode], 'student-ai-mode'));
 
+  // 실패는 선택한 기록이 없어도 먼저 보여 줍니다.
+  if (res.status === 'error') {
+    const code = aiSafeCode(res.error);
+    root.append(identityNode('p', `AI 설명 실패: ${code ?? '확인 불가'} · ${statusSafe(res.error?.message, 300) ?? '서버가 메시지를 보내지 않았습니다.'}`, 'student-ai-error'));
+    if (code === 'ON_AI_INVALID_OUTPUT') root.append(identityNode('p', '실패 이유: 근거가 부족하거나 맞지 않거나, 조치를 이미 실행했다고 답한 설명은 쓸 수 없습니다.', 'student-ai-reason'));
+    else if (code === 'ON_AI_INVALID_INPUT') root.append(identityNode('p', '실패 이유: 설명에 필요한 사건 근거·규칙을 확인할 수 없습니다.', 'student-ai-reason'));
+    root.append(identityNode('p', EXPLAIN_RECORD_KEPT, 'student-ai-note'));
+    return root;
+  }
   if (res.status === 'loading') {
     root.append(identityNode('p', 'AI 설명을 요청하는 중입니다.', 'student-ai-loading'));
     return root;
   }
-  if (res.status === 'error') {
-    const code = aiSafeCode(res.error);
-    root.append(identityNode('p', `AI 설명 실패: ${code ?? '확인 불가'} · ${statusSafe(res.error?.message, 300) ?? '서버가 메시지를 보내지 않았습니다.'}`, 'student-ai-error'));
-    root.append(identityNode('p', '기록은 그대로 유지됩니다. 설명이 없다고 해서 기록이 바뀐 것은 아닙니다.', 'student-ai-note'));
-    return root;
-  }
-  const eventId = identityText(event?.id);
-  const summary = statusSafe(res.data?.summary, 1500);
-  if (res.status === 'ok' && eventId !== null && summary !== null) {
-    root.setAttribute('data-student-explanation-event', eventId);
-    root.append(identityNode('p', `사건 ID: ${eventId}`, 'student-ai-event'));
-    root.append(identityNode('p', `AI 설명: ${summary}`, 'student-ai-summary'));
-    root.append(identityNode('p', `설명 시각: ${decisionTime(checkedAt)}`, 'student-ai-time'));
-    root.append(identityNode('p', 'AI 설명은 참고 정보입니다. 이 화면은 조치를 실행하지 않습니다.', 'student-ai-note'));
+  if (event === null || event === undefined) {
+    root.append(identityNode('p', '보안 기록에서 기록을 먼저 고르세요.', 'student-ai-idle'));
     return root;
   }
   if (res.status === 'idle' || res.status === undefined) {
-    root.append(identityNode('p', '사건 설명을 아직 요청하지 않았습니다. 보안 기록에서 기록을 골라 「AI 설명 요청」을 누르세요.', 'student-ai-idle'));
+    root.append(identityNode('p', '이 기록의 AI 설명을 아직 요청하지 않았습니다. 보안 기록에서 「AI 설명 요청」을 누르세요.', 'student-ai-idle'));
     return root;
   }
-  root.append(identityNode('p', '확인 불가: AI 설명 응답을 읽을 수 없어 설명을 보여 줄 수 없습니다.', 'student-ai-unverified'));
-  root.append(identityNode('p', '기록은 그대로 유지됩니다.', 'student-ai-note'));
+  const checked = res.status === 'ok' ? explainCheck(event, res.data) : { reason: 'AI 설명 응답을 읽을 수 없습니다.' };
+  if (checked.reason !== undefined) {
+    root.append(identityNode('p', `확인 불가: 이 AI 설명은 쓸 수 없습니다. ${checked.reason}`, 'student-ai-unverified'));
+    root.append(identityNode('p', EXPLAIN_RECORD_KEPT, 'student-ai-note'));
+    return root;
+  }
+
+  root.setAttribute('data-student-explanation-event', identityText(event.id));
+  root.append(identityNode('h4', 'AI 설명(참고용)'));
+  const info = identityNode('dl');
+  decisionRow(info, '사건 ID', identityText(event.id));
+  decisionRow(info, '설명 시각', decisionTime(checkedAt));
+  root.append(info);
+  root.append(identityNode('p', `AI 요약: ${checked.summary}`, 'student-ai-summary'));
+  root.append(explainList(checked.evidence, '인용한 근거 (근거 ID — 근거 글)'));
+  root.append(explainList(checked.rules, '규칙 (규칙 ID — 규칙 글)'));
+
+  // unknown 은 안전·정상으로 바꾸지 않고 확인 불가로 나열합니다. 값이 없거나 이상한 것도 확인 불가입니다.
+  const unknowns = [];
+  for (const [key, name] of EXPLAIN_STATE_NAMES) {
+    const value = event.state !== null && typeof event.state === 'object' ? event.state[key] : undefined;
+    const known = Object.hasOwn(STATUS_STATE_VALUES[key], String(value));
+    if (value === 'unknown') unknowns.push(`${name}: 확인 불가(unknown)`);
+    else if (!known) unknowns.push(`${name}: 확인 불가(값 없음 또는 알 수 없는 값)`);
+  }
+  const stateGroup = identityNode('section', undefined, 'student-ai-group');
+  stateGroup.append(identityNode('h5', '확인 불가 상태'));
+  if (unknowns.length === 0) stateGroup.append(identityNode('p', '없음'));
+  else {
+    const list = identityNode('ul');
+    for (const line of unknowns) list.append(identityNode('li', line));
+    stateGroup.append(list);
+  }
+  root.append(stateGroup);
+
+  const proposalGroup = identityNode('section', undefined, 'student-ai-group');
+  proposalGroup.append(identityNode('h5', 'AI 제안'));
+  if (checked.proposals.length === 0) {
+    proposalGroup.append(identityNode('p', checked.supported.length === 0 ? EXPLAIN_NO_ACTIONS : EXPLAIN_NO_PROPOSAL, 'student-ai-no-proposal'));
+  } else {
+    const list = identityNode('ul');
+    for (const item of checked.proposals) list.append(identityNode('li', `조치: ${item.action} · 이유: ${item.reason} · 근거 ID: ${item.refs.join(', ')} · 사람 확인이 필요하며 실행되지 않았습니다.`));
+    proposalGroup.append(list);
+  }
+  root.append(proposalGroup);
+  root.append(identityNode('p', EXPLAIN_REFERENCE, 'student-ai-note'));
   return root;
 }
 
