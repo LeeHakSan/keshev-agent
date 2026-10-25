@@ -203,6 +203,23 @@ function eventsDetail(event) {
   decisionRow(states, '세션 상태(state.session)', identityStatus(SESSION_STATUS_TEXT, event.state?.session));
   decisionRow(states, '기기 상태(state.device)', identityStatus(DEVICE_STATUS_TEXT, event.state?.device));
   detail.append(states);
+  // 16단계: 이 단계에서는 어떤 조치도 실행 연결이 없으므로, 서버가 조치를 알려 주면 요청을 보내지 않는 비활성 안내 버튼만 둡니다.
+  // supportedActions 가 비어 있으면 조치 영역 자체를 만들지 않습니다.
+  const actions = Array.isArray(event.supportedActions) ? event.supportedActions.map(identityText).filter((action) => action !== null) : [];
+  if (actions.length > 0) {
+    detail.append(identityNode('h5', '조치'));
+    const row = identityNode('div', undefined, 'student-event-actions');
+    for (const action of actions) {
+      const unsupported = identityNode('button', `${action} 미지원`);
+      unsupported.setAttribute('type', 'button');
+      unsupported.disabled = true;
+      unsupported.setAttribute('disabled', '');
+      unsupported.setAttribute('aria-disabled', 'true');
+      row.append(unsupported);
+    }
+    detail.append(row);
+    detail.append(identityNode('p', '조치 실행 연결은 준비 중입니다. 아직 지원하지 않는 조치이며, 이 화면은 조치 요청을 보내지 않습니다.', 'student-event-actions-note'));
+  }
   return detail;
 }
 
@@ -301,6 +318,184 @@ function eventsView(input) {
   );
   root.append(filters, results);
   draw(null);
+  return root;
+}
+
+// ---------- 16단계: 기기·세션·알림·도움정보와 오류·빈 화면 (renderStatus 에서만 씁니다) ----------
+const STATUS_MODE_NOTICE = Object.freeze({
+  demo: '예제 자료(demo): 실제 기기·세션·알림이 아닙니다.',
+  disconnected: '연결 없음(disconnected): 서버에 연결되어 있지 않습니다.',
+  unknown: '확인 불가(unknown): 연결 상태를 확인할 수 없습니다.',
+});
+const STATUS_RESOURCE_TEXT = Object.freeze({
+  me: '로그인 정보', apps: '업무 앱', events: '접속 기록', devices: '기기', sessions: '세션', access: '접속 판정', diagnostics: '도움정보', vulnerabilities: '취약점',
+});
+const STATUS_TIMEOUT_CODES = new Set(['TIMEOUT', 'REQUEST_TIMEOUT', 'ENGINE_TIMEOUT', 'WB_CLCO_TIMEOUT']);
+const STATUS_RETRY_TEXT = '다시 시도는 위쪽 다시 불러오기 버튼을 직접 누르세요. 이 화면은 자동으로 다시 요청하지 않습니다.';
+// 열쇠·토큰·비밀번호처럼 보이는 글자는 화면과 복사 내용에서 가립니다.
+const STATUS_SECRET = /Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_ -]?key|authorization|password|passwd|secret|token|비밀번호|토큰|열쇠)\s*[:=]\s*\S+|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*|[A-Za-z0-9+/_-]{40,}/giu;
+
+// 화면과 복사에 쓰는 글자 하나를 안전하게 만듭니다. 글자·숫자만 받고, 비밀값 모양은 가리며, 길이를 줄입니다.
+function statusSafe(value, max = 200) {
+  const raw = typeof value === 'number' && Number.isFinite(value) ? String(value) : identityText(value);
+  if (raw === null) return null;
+  return raw.replace(STATUS_SECRET, '[가림]').slice(0, max);
+}
+
+function statusIsTimeout(error) {
+  return (typeof error?.code === 'string' && STATUS_TIMEOUT_CODES.has(error.code)) || /시간.{0,6}초과/u.test(identityText(error?.message) ?? '');
+}
+
+// 입력 자료 하나를 읽습니다. idle(아직 요청 전)도 구분합니다. 형식이 틀리면 확인 불가로 취급합니다.
+function statusResource(resource) {
+  const ok = resource !== null && typeof resource === 'object';
+  return {
+    status: ok && ['idle', 'loading', 'ok', 'error'].includes(resource.status) ? resource.status : 'invalid',
+    mode: ok && typeof resource.mode === 'string' ? resource.mode : null,
+    data: ok ? resource.data : undefined,
+    error: ok && resource.error !== null && typeof resource.error === 'object' ? resource.error : null,
+  };
+}
+
+// 자료 하나(기기·세션·도움정보)의 구역: 불러오는 중·실패·빈 목록·목록을 서로 다른 문장으로 보여 줍니다.
+function statusGroup(title, noun, resource, topMode, empty, buildRows) {
+  const group = identityNode('section', undefined, 'student-status-group');
+  group.append(identityNode('h4', title));
+  if (resource.mode !== null && resource.mode !== topMode && Object.hasOwn(STATUS_MODE_NOTICE, resource.mode)) {
+    group.append(identityNode('p', STATUS_MODE_NOTICE[resource.mode], 'student-status-mode'));
+  }
+  if (resource.status === 'loading') {
+    group.append(identityNode('p', `${noun}를 불러오는 중입니다.`, 'student-status-loading'));
+  } else if (resource.status === 'error') {
+    // 조회 실패는 빈 목록이 아닙니다. 무엇을 불러오지 못했는지와 서버 message, 다시 시도 방법을 알립니다.
+    group.append(identityNode('p', `${noun}를 불러오지 못했습니다: ${statusSafe(resource.error?.message, 300) ?? '서버가 오류 설명을 보내지 않았습니다.'}`, 'student-status-error'));
+    if (statusIsTimeout(resource.error)) group.append(identityNode('p', '시간 초과: 서버가 정해진 시간 안에 응답하지 않았습니다.', 'student-status-timeout'));
+    if (typeof resource.error?.code === 'string' && UNVERIFIED_ERROR_CODES.has(resource.error.code)) {
+      group.append(identityNode('p', '확인 불가: 서버 응답을 확인하지 못해 내용을 알 수 없습니다.', 'student-status-unverified'));
+    }
+    group.append(identityNode('p', STATUS_RETRY_TEXT, 'student-status-retry'));
+  } else if (resource.status === 'ok' && Array.isArray(resource.data)) {
+    group.append(resource.data.length === 0 ? identityNode('p', empty, 'student-status-empty') : buildRows(resource.data));
+  } else if (resource.status === 'idle') {
+    group.append(identityNode('p', `${noun}는 아직 요청하지 않았습니다.`, 'student-status-idle'));
+  } else {
+    group.append(identityNode('p', `확인 불가: ${noun} 응답을 읽을 수 없습니다.`, 'student-status-unverified'));
+  }
+  return group;
+}
+
+function statusList(items, line) {
+  const list = identityNode('ul');
+  for (const item of items) list.append(identityNode('li', line(item)));
+  return list;
+}
+
+// 도움정보에서 안내한 여섯 값만 꺼냅니다. 그 밖의 항목(예: AI 설정)은 화면에도 복사에도 쓰지 않습니다.
+function statusDiagnosticsFields(data) {
+  if (data === null || typeof data !== 'object') return null;
+  const engine = data.engine !== null && typeof data.engine === 'object' ? data.engine : {};
+  return [
+    ['requestId', '요청 ID', statusSafe(data.requestId)],
+    ['component', '구성요소', statusSafe(data.component)],
+    ['version', '버전', statusSafe(data.version)],
+    ['checkedAt', '확인 시각', statusSafe(data.checkedAt)],
+    ['engine.mode', '엔진 모드', statusSafe(engine.mode)],
+    ['engine.code', '엔진 코드', statusSafe(engine.code)],
+  ];
+}
+
+// 「도움정보 복사」: 사용자가 누를 때만 복사합니다. 복사에 실패하면 성공이라고 쓰지 않고 직접 복사할 수 있게 값을 보여 줍니다.
+function statusCopyBox(fields) {
+  const box = identityNode('div', undefined, 'student-status-copy');
+  const button = identityNode('button', '도움정보 복사');
+  button.setAttribute('type', 'button');
+  const feedback = identityNode('p', undefined, 'student-status-copy-result');
+  feedback.setAttribute('role', 'status');
+  const fallback = identityNode('textarea', undefined, 'student-status-copy-fallback');
+  fallback.setAttribute('readonly', '');
+  fallback.setAttribute('aria-label', '직접 복사할 도움정보');
+  fallback.hidden = true;
+  if (fields === null) {
+    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
+    feedback.textContent = '복사할 도움정보가 없습니다. 제공 화면의 「도움정보 불러오기」로 먼저 불러오세요.';
+  } else {
+    feedback.textContent = '이 정보는 도움을 요청할 때 쓰도록 복사하는 것입니다. 누를 때만 복사하고 어디에도 전송하지 않습니다.';
+    const text = fields.map(([key, , value]) => `${key}: ${value ?? '확인 불가'}`).join('\n');
+    button.addEventListener('click', async () => {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw new Error('clipboard_unavailable');
+        await navigator.clipboard.writeText(text);
+        feedback.textContent = '도움정보 6개 값을 복사했습니다. 비밀값은 포함하지 않습니다.';
+        fallback.hidden = true;
+      } catch {
+        feedback.textContent = '자동으로 복사하지 못했습니다. 아래 내용을 직접 선택해 복사하세요.';
+        fallback.textContent = text;
+        fallback.hidden = false;
+        if (typeof fallback.focus === 'function') fallback.focus();
+        if (typeof fallback.select === 'function') fallback.select();
+      }
+    });
+  }
+  box.append(button, feedback, fallback);
+  return box;
+}
+
+function statusDiagnostics(resource) {
+  const group = identityNode('section', undefined, 'student-status-group');
+  group.append(identityNode('h4', '도움정보(진단)'));
+  let fields = null;
+  if (resource.status === 'idle') {
+    group.append(identityNode('p', '도움정보를 아직 불러오지 않았습니다. 제공 화면의 「도움정보 불러오기」를 누르면 여기에 표시됩니다.', 'student-status-idle'));
+  } else if (resource.status === 'loading') {
+    group.append(identityNode('p', '도움정보를 불러오는 중입니다.', 'student-status-loading'));
+  } else if (resource.status === 'error') {
+    group.append(identityNode('p', `도움정보를 불러오지 못했습니다: ${statusSafe(resource.error?.message, 300) ?? '서버가 오류 설명을 보내지 않았습니다.'}`, 'student-status-error'));
+    if (statusIsTimeout(resource.error)) group.append(identityNode('p', '시간 초과: 서버가 정해진 시간 안에 응답하지 않았습니다.', 'student-status-timeout'));
+    group.append(identityNode('p', STATUS_RETRY_TEXT, 'student-status-retry'));
+  } else if (resource.status === 'ok' && statusDiagnosticsFields(resource.data) !== null) {
+    fields = statusDiagnosticsFields(resource.data);
+    const list = identityNode('dl');
+    for (const [key, term, value] of fields) decisionRow(list, `${term}(${key})`, value ?? '확인 불가');
+    group.append(list);
+  } else {
+    group.append(identityNode('p', '확인 불가: 도움정보 응답을 읽을 수 없습니다.', 'student-status-unverified'));
+  }
+  group.append(statusCopyBox(fields));
+  return group;
+}
+
+// 알림: 항목마다 어느 자료(resource)의 알림인지, 안전한 code, message 를 보여 줍니다.
+function statusNotifications(list) {
+  const group = identityNode('section', undefined, 'student-status-group');
+  group.append(identityNode('h4', '알림'));
+  if (!Array.isArray(list)) {
+    group.append(identityNode('p', '확인 불가: 알림 목록을 읽을 수 없습니다.', 'student-status-unverified'));
+  } else if (list.length === 0) {
+    group.append(identityNode('p', '주의할 알림이 없습니다.', 'student-status-empty'));
+  } else {
+    group.append(statusList(list, (item) => {
+      const resource = typeof item?.resource === 'string' && Object.hasOwn(STATUS_RESOURCE_TEXT, item.resource) ? `${STATUS_RESOURCE_TEXT[item.resource]}(${item.resource})` : '확인 불가';
+      const code = typeof item?.code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/u.test(item.code) ? item.code : '확인 불가';
+      return `자료: ${resource} · 코드: ${code} · ${statusSafe(item?.message, 300) ?? '메시지 없음'}`;
+    }));
+  }
+  return group;
+}
+
+// 상태 칸 전체. 호출마다 새로 만들어 이전 오류 안내가 남지 않으며, 자동으로 다시 요청하지 않습니다.
+function statusView(input) {
+  const { devices, sessions, notifications, diagnostics, mode } = input !== null && typeof input === 'object' ? input : {};
+  const root = identityNode('section', undefined, 'student-status');
+  root.setAttribute('aria-label', '기기·세션·알림·도움정보');
+  const topMode = typeof mode === 'string' ? mode : null;
+  if (topMode !== null && Object.hasOwn(STATUS_MODE_NOTICE, topMode)) root.append(identityNode('p', STATUS_MODE_NOTICE[topMode], 'student-status-mode'));
+  root.append(statusGroup('기기', '기기 정보', statusResource(devices), topMode, '등록된 기기가 없습니다.', (rows) => statusList(rows, (device) => `${identityNamed(device)} · ${identityStatus(DEVICE_STATUS_TEXT, device?.status)}`)));
+  root.append(identityNode('p', '기기는 내 이름으로 등록되고 회수되지 않은 기기이며 100개까지 보입니다.', 'student-status-scope'));
+  root.append(statusGroup('세션', '세션 정보', statusResource(sessions), topMode, '현재 연결이 없습니다.', (rows) => statusList(rows, (session) => `${identityText(session?.id) ?? '확인 불가'} · ${identityStatus(SESSION_STATUS_TEXT, session?.status)}`)));
+  root.append(identityNode('p', '세션은 지금 검증된 연결 한 개만 보입니다. 지난 세션 목록이 아닙니다.', 'student-status-scope'));
+  root.append(statusNotifications(notifications));
+  root.append(statusDiagnostics(statusResource(diagnostics)));
   return root;
 }
 
@@ -403,7 +598,7 @@ export function createStudentView() {
       return root;
     },
     renderEvents(input) { return eventsView(input); },
-    renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
+    renderStatus(input) { return statusView(input); },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection() { return '학생 구현 대기: 모델 응답 점검과 실제 사건 설명을 구분하고 AI 오류·취소·수동 복구를 안내하세요.'; },
     renderExplanation() { return '학생 구현 대기: 선택한 사건의 근거·규칙·현재 상태와 AI 설명을 연결하세요. 제안은 자동 실행하지 않습니다.'; },
