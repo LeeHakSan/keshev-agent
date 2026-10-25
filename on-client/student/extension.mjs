@@ -529,6 +529,8 @@ const AI_ERROR_KIND = Object.freeze({
   ENGINE_TIMEOUT: ['시간 초과', `서버의 확인 시간이 초과됐습니다. ${AI_RETRY_LATER}`],
   TIMEOUT: ['시간 초과', `응답 시간이 초과됐습니다. ${AI_RETRY_LATER}`],
   NETWORK_ERROR: ['네트워크 오류', `서버에 연결할 수 없습니다. ${AI_RETRY_LATER}`],
+  WB_CLCO_NETWORK_ERROR: ['네트워크 오류', `AI 서비스까지 네트워크로 연결하지 못했습니다. ${AI_RETRY_LATER}`],
+  WB_CLCO_SERVER_UNAVAILABLE: ['네트워크 오류', `AI 서비스가 일시적으로 응답하지 않습니다. ${AI_RETRY_LATER}`],
   WB_CLCO_CANCELLED: ['취소', '점검을 취소했습니다. 이전 응답은 현재 결과가 아닙니다.'],
   CANCELLED: ['취소', '점검을 취소했습니다. 이전 응답은 현재 결과가 아닙니다.'],
   REQUEST_CANCELLED: ['취소', '점검을 취소했습니다. 이전 응답은 현재 결과가 아닙니다.'],
