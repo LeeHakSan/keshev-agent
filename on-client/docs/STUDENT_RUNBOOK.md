@@ -5,7 +5,7 @@
 
 ## 1. 이 프로젝트는 무엇인가
 
-회사 직원이 자기 로그인 상태, 업무 앱 접근 판정, 최근 접속 기록과 보안 경보, AI 연결 상태, AI 사건 설명, 조치 처리 상태, 설치 패키지의 알려진 취약점 조회 결과를 보는 로컬 보안 앱입니다. 서버와 화면 뼈대는 제공된 시작 틀(0.2.14)이고, 학생이 만든 것은 `student/extension.mjs` 한 파일의 화면 표시 함수 8개입니다.
+회사 직원이 자기 로그인 상태, 업무 앱 접근 판정, 최근 접속 기록과 보안 경보, AI 연결 상태, AI 사건 설명, 조치 처리 상태, 설치 패키지의 알려진 취약점 조회 결과를 보는 로컬 보안 앱입니다. 서버와 화면 뼈대는 제공된 시작 틀(0.2.14)입니다. 학생이 만든 것은 `student/extension.mjs` 의 화면 표시 함수 8개(13~20단계)와, 완성본 2~4일차에 더한 「내 PC 상태」·「연결과 기록」(측정 코드는 `student/pc-status.mjs`, `student/pc-security.mjs`)입니다. **처음 실행하는 사람은 저장소 최상위의 [`README.md`](../../README.md) 한 장을 먼저 읽으세요.**
 
 ## 2. 지원 환경과 확인한 버전
 
@@ -63,7 +63,7 @@ keshev-agent/                      ← Git 최상위 (원격: https://github.com
 
 3. 브라우저에서 `http://127.0.0.1:5189` 를 엽니다. 화면에 「보호 현황」「업무 앱」「보안 기록」 탭이 보이면 시작된 것입니다. 서버 응답은 `GET /` 가 200 이었습니다.
 4. 문법 검사: `npm run check` (`node --check student/extension.mjs`). 오류가 없으면 아무것도 출력하지 않고 끝납니다.
-5. 종료: 서버가 켜진 터미널에서 `Ctrl+C`. 종료 뒤 같은 주소가 응답하지 않으면 종료된 것입니다. 이 문서를 쓰는 동안은 프로세스를 직접 종료했고(`pkill -f "node.*src/server"`), 종료 뒤 주소 응답이 없는 것을 확인했습니다. **`Ctrl+C` 자체는 이 문서에서 실행해 확인하지 않았습니다(미확인).**
+5. 종료: 서버가 켜진 터미널에서 `Ctrl+C`. 종료 뒤 같은 주소가 응답하지 않으면 종료된 것입니다. `Ctrl+C` 와 같은 신호(`SIGINT`)를 서버에 보내 확인했습니다: 프로세스가 바로 끝났고(종료 코드 130, `Ctrl+C` 로 끝났을 때의 정상 값) 포트가 비워졌습니다. 키보드로 직접 누른 것은 아니라서 그 부분은 **미확인**입니다. 다른 프로세스를 이름으로 한꺼번에 끄는 명령(`pkill` 등)은 안내하지 않습니다.
 6. 재실행: 2번을 다시 실행합니다. 서버를 다시 켠 뒤 브라우저를 새로고침하면 화면 상태가 처음(조회 전)으로 돌아갑니다.
 
 제공 문서가 안내하는 Windows 방식(`powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`)은 **이 PC에서 실행하지 못해 확인하지 않았습니다.**
@@ -174,6 +174,8 @@ flowchart LR
 
 | 화면·응답에 보이는 것 | 의미 | 확인 순서 | 이 PC에서 본 적 있는가 |
 |---|---|---|---|
+| `Error: listen EADDRINUSE … 127.0.0.1:5189` (터미널의 긴 오류) | 같은 포트에서 앱이 이미 켜져 있음 (이전에 켠 것을 끄지 않음) | 먼저 켠 터미널에서 `Ctrl+C`. 못 찾으면 `ON_PORT=5190 npm run demo` 로 다른 번호에 켜고 주소를 `5190` 으로 엽니다 | 봄 (새 폴더에서 두 번째로 켰을 때 그대로 나옴). `ON_PORT` 방법은 Mac 에서 확인, Windows 는 **미확인** |
+| `npm error enoent Could not read package.json` | `on-client` 가 아닌 폴더에서 명령을 실행함 | `cd on-client` 로 들어가 `package.json` 이 보이는지 확인 | 봄 (`keshev-agent` 에서 실행했을 때) |
 | `ENGINE_NOT_CONNECTED` ("기존 서버·에이전트의 연결을 확인할 수 없습니다") | 접근 제어·XDR 연동이 연결되지 않음 (`npm start` 기본 상태) | ① 서버 터미널의 시작 문구 확인 ② 담당자 안내에 따른 연결 구성 확인 ③ `docs/CONNECTION_TROUBLESHOOT.md` | 봄 (`GET /api/me` 응답) |
 | 화면의 "연결 실패" / "연결 없음(disconnected)" | 서버가 꺼졌거나 연결 없음 | ① 서버가 켜져 있는지 ② `http://127.0.0.1:5189` 응답 ③ 서버 재실행 후 「다시 불러오기」 | 봄 (서버를 끄고 확인) |
 | `CONTRACT_MISMATCH`, `ENGINE_RESULT_UNVERIFIED` | 응답 형식·내용을 확인할 수 없음 → 확인 불가 | 성공으로 보지 않고 직접 다시 조회 | 모의 데이터로만 확인 |
@@ -182,7 +184,7 @@ flowchart LR
 | `WB_CLCO_AUTH_REQUIRED`, `WB_CLCO_ACCESS_BLOCKED` | 인증 실패·접근 제한 | 계정 연결을 다시 확인, 담당자 확인 | 모의 데이터로만 확인 |
 | `WB_CLCO_COHORT_BUDGET_EXHAUSTED`, `WB_CLCO_LIMIT_REACHED`, `WB_CLCO_SESSION_CLOSED` | 반 사용량·이용 한도·이용 시간 아님 | 담당자·이용 시간 확인 | 모의 데이터로만 확인 |
 | `WB_CLCO_RATE_LIMITED`, `NETWORK_ERROR`, `WB_CLCO_NETWORK_ERROR`, `WB_CLCO_SERVER_UNAVAILABLE` | 요청 제한·네트워크 | 잠시 뒤 직접 다시 점검 | AI 쪽은 모의 데이터로만 확인. 「내 PC 상태」의 `NETWORK_ERROR` 는 서버를 끄고 실제 화면으로 확인 (완성본 4일차) |
-| `NOT_FOUND` ("지원하지 않는 주소입니다") — 「내 PC 상태」·「연결과 기록」 실패 화면 | 서버가 `/api/pc-status`·`/api/pc-security` 가 생기기 전의 예전 코드로 켜져 있음 | 서버를 `Ctrl+C` 로 끄고 다시 실행한 뒤 「다시 조회」 | 응답은 봄 (2일차에 예전 서버가 새 주소에 이 오류로 답함). 화면 안내 문구는 모의 점검으로만 확인 |
+| `NOT_FOUND` ("지원하지 않는 주소입니다") — 「내 PC 상태」·「연결과 기록」 실패 화면, 또는 화면이 예전 모양 | 서버가 `/api/pc-status`·`/api/pc-security` 가 생기기 전의 예전 코드로 켜져 있음 | 서버를 `Ctrl+C` 로 끄고 다시 실행한 뒤 「다시 조회」 | 응답은 봄 (2일차에 예전 서버가 새 주소에 이 오류로 답함). 화면 안내 문구는 모의 점검으로만 확인 |
 | `ON_AI_MODEL_LIST_EMPTY` | 쓸 수 있는 AI 모델 없음 | 담당자에게 모델 허용 설정 확인 요청 | 모의 데이터로만 확인 |
 | `PROJECT_NOT_CONFIGURED` (`not_configured`) | OSV 조회 대상 프로젝트 설정 없음 | 운영자가 준비하는 설정. 학생이 임의로 바꾸지 않음 | 봄 (예제 서버) |
 | `CANCELLED` | 사용자가 취소 | 이전 결과는 현재 결과가 아님 → 직접 다시 조회 | 봄 (패키지 조회 취소) |
