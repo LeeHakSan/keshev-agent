@@ -484,10 +484,192 @@ function statusNotifications(list) {
 }
 
 // 상태 칸 전체. 호출마다 새로 만들어 이전 오류 안내가 남지 않으며, 자동으로 다시 요청하지 않습니다.
+// ---------- 완성본 2일차: 내 PC 상태(CPU·메모리·디스크) 실측과 최근 5번 비교 (statusView 에서만 씁니다) ----------
+// 값은 서버(GET /api/pc-status)가 이 서버를 실행한 PC 에서 일반 권한으로 잰 것입니다. 예제(demo) 자료가 아닙니다.
+// 못 읽은 값은 예시 값으로 채우지 않고 확인 불가와 이유를 보여 줍니다. 추이는 이 화면을 연 동안만 메모리에 있습니다.
+const PC_HISTORY_MAX = 5;
+const PC_REASON_TEXT = Object.freeze({
+  NOT_SUPPORTED: '이 PC 에서는 읽을 수 없는 항목입니다.',
+  PERMISSION_DENIED: '일반 권한으로는 읽을 수 없었습니다. 관리자 권한은 쓰지 않습니다.',
+  NOT_FOUND: '읽을 위치를 찾지 못했습니다.',
+  READ_FAILED: '값을 읽지 못했거나 믿을 수 없는 값이라 쓰지 않았습니다.',
+  UNVERIFIED: '서버 응답의 형식을 확인할 수 없어 쓰지 않았습니다.',
+});
+const pcState = { api: null, onChange: null, phase: 'idle', seq: 0, errorCode: null, history: [] };
+
+const pcFinite = (value) => typeof value === 'number' && Number.isFinite(value);
+const pcTime = (iso) => {
+  const date = typeof iso === 'string' ? new Date(iso) : null;
+  if (date === null || Number.isNaN(date.getTime())) return null;
+  const two = (n) => String(n).padStart(2, '0');
+  return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+};
+const pcGb = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+const pcUnavailable = (raw) => ({
+  ok: false,
+  reason: raw !== null && typeof raw === 'object' && typeof raw.reason === 'string' && Object.hasOwn(PC_REASON_TEXT, raw.reason) ? raw.reason : 'UNVERIFIED',
+  time: pcTime(raw?.at),
+});
+
+// 서버가 준 값 하나를 믿을 수 있는 모양일 때만 쓰고, 아니면 확인 불가로 둡니다.
+function pcMetric(raw, valid, pick) {
+  if (raw === null || typeof raw !== 'object' || raw.status !== 'ok') return pcUnavailable(raw);
+  const time = pcTime(raw.at);
+  if (time === null || !valid(raw)) return pcUnavailable(raw);
+  return { ok: true, time, ...pick(raw) };
+}
+
+function pcSample(data) {
+  if (data === null || typeof data !== 'object' || data.source !== 'measured') return null;
+  return {
+    platform: ['darwin', 'win32', 'linux'].includes(data.platform) ? data.platform : null,
+    cpu: pcMetric(data.cpu, (c) => pcFinite(c.percent) && c.percent >= 0 && c.percent <= 100 && pcFinite(c.windowMs) && c.windowMs > 0,
+      (c) => ({ percent: c.percent, windowMs: c.windowMs })),
+    memory: pcMetric(data.memory, (m) => pcFinite(m.usedBytes) && pcFinite(m.totalBytes) && m.totalBytes > 0 && m.usedBytes >= 0 && m.usedBytes <= m.totalBytes && pcFinite(m.percent),
+      (m) => ({ usedBytes: m.usedBytes, totalBytes: m.totalBytes, percent: m.percent })),
+    disk: pcMetric(data.disk, (d) => pcFinite(d.freeBytes) && pcFinite(d.totalBytes) && d.totalBytes > 0 && d.freeBytes >= 0 && d.freeBytes <= d.totalBytes && pcFinite(d.freePercent),
+      (d) => ({ freeBytes: d.freeBytes, totalBytes: d.totalBytes, freePercent: d.freePercent })),
+  };
+}
+
+// 요청은 한 번에 하나만 하고, 더 새 요청이 시작되면 예전 응답은 버립니다.
+function pcMeasure(redraw) {
+  if (pcState.api === null || pcState.phase === 'loading') return;
+  const seq = ++pcState.seq;
+  pcState.phase = 'loading';
+  pcState.errorCode = null;
+  if (redraw) pcState.onChange?.();
+  Promise.resolve(pcState.api.get('/api/pc-status')).then((result) => {
+    if (seq !== pcState.seq) return;
+    const sample = result?.ok === true ? pcSample(result.data) : null;
+    if (sample !== null) {
+      pcState.history = [sample, ...pcState.history].slice(0, PC_HISTORY_MAX);
+      pcState.phase = 'done';
+    } else {
+      pcState.errorCode = result?.ok === false ? aiSafeCode(result.error) ?? 'UNVERIFIED' : 'UNVERIFIED';
+      pcState.phase = 'error';
+    }
+  }).catch(() => {
+    if (seq !== pcState.seq) return;
+    pcState.errorCode = 'UNVERIFIED';
+    pcState.phase = 'error';
+  }).then(() => { if (seq === pcState.seq) pcState.onChange?.(); });
+}
+
+// 직전 측정과 비교합니다. 둘 중 하나라도 확인 불가면 비교하지 않습니다.
+function pcDelta(current, previous, read, format) {
+  if (previous === undefined) return '비교 불가 (직전 측정 없음)';
+  if (!current.ok || !previous.ok) return '비교 불가 (확인 불가 값 포함)';
+  const diff = Math.round((read(current) - read(previous)) * 10) / 10;
+  if (diff === 0) return '변화 없음';
+  return `${diff > 0 ? '+' : '−'}${format(Math.abs(diff))}`;
+}
+
+function pcRow(table, label, metric, valueText, detail, deltaText) {
+  const row = identityNode('tr');
+  row.append(identityNode('th', label));
+  row.lastChild.setAttribute('scope', 'row');
+  row.append(identityNode('td', metric.ok ? valueText : '확인 불가'));
+  row.append(identityNode('td', metric.time ?? '확인 불가'));
+  row.append(identityNode('td', deltaText));
+  row.append(identityNode('td', metric.ok ? detail : PC_REASON_TEXT[metric.reason]));
+  table.append(row);
+}
+
+// 표 칸이 서로 붙어 읽기 어려워서 여백과 줄을 지정합니다. 제공 style.css 는 바꾸지 않습니다.
+function pcStyleTable(table) {
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+  table.style.margin = '8px 0';
+  for (const row of table.children) {
+    for (const cell of row.children) {
+      cell.style.padding = '6px 10px';
+      cell.style.textAlign = 'left';
+      cell.style.verticalAlign = 'top';
+      cell.style.borderBottom = '1px solid #d0d7de';
+    }
+  }
+  return table;
+}
+
+function pcLatestTable(latest, previous) {
+  const table = identityNode('table', undefined, 'student-pc-table');
+  const head = identityNode('tr');
+  for (const title of ['항목', '값', '잰 시각', '직전 대비', '설명']) {
+    head.append(identityNode('th', title));
+    head.lastChild.setAttribute('scope', 'col');
+  }
+  table.append(head);
+  const { cpu, memory, disk } = latest;
+  pcRow(table, 'CPU 사용률', cpu, cpu.ok ? `${cpu.percent} %` : '', cpu.ok ? `${cpu.windowMs / 1000}초 동안의 평균입니다.` : '',
+    pcDelta(cpu, previous?.cpu, (m) => m.percent, (n) => `${n.toFixed(1)}%p`));
+  pcRow(table, '메모리 사용량', memory, memory.ok ? `${pcGb(memory.usedBytes)} / ${pcGb(memory.totalBytes)} (${memory.percent} %)` : '',
+    '운영체제가 알려 준 남은 메모리를 뺀 값입니다.', pcDelta(memory, previous?.memory, (m) => m.percent, (n) => `${n.toFixed(1)}%p`));
+  pcRow(table, '디스크 남은 공간', disk, disk.ok ? `${pcGb(disk.freeBytes)} / ${pcGb(disk.totalBytes)} (남은 ${disk.freePercent} %)` : '',
+    '이 서버를 실행한 폴더가 있는 디스크입니다.', pcDelta(disk, previous?.disk, (m) => m.freeBytes / 1024 ** 3, (n) => `${n.toFixed(1)} GB`));
+  return pcStyleTable(table);
+}
+
+function pcHistoryTable(history) {
+  const table = identityNode('table', undefined, 'student-pc-history');
+  const head = identityNode('tr');
+  for (const title of ['잰 시각', 'CPU 사용률', '메모리 사용률', '디스크 남은 공간']) {
+    head.append(identityNode('th', title));
+    head.lastChild.setAttribute('scope', 'col');
+  }
+  table.append(head);
+  for (const sample of history) {
+    const row = identityNode('tr');
+    row.append(identityNode('td', sample.cpu.time ?? '확인 불가'));
+    row.append(identityNode('td', sample.cpu.ok ? `${sample.cpu.percent} %` : '확인 불가'));
+    row.append(identityNode('td', sample.memory.ok ? `${sample.memory.percent} %` : '확인 불가'));
+    row.append(identityNode('td', sample.disk.ok ? pcGb(sample.disk.freeBytes) : '확인 불가'));
+    table.append(row);
+  }
+  return pcStyleTable(table);
+}
+
+function pcStatusSection() {
+  if (pcState.phase === 'idle') pcMeasure(false);
+  const section = identityNode('section', undefined, 'student-pc-status');
+  section.setAttribute('aria-label', '내 PC 상태');
+  section.append(identityNode('h4', '내 PC 상태'));
+  section.append(identityNode('p', '실측값: 이 서버를 실행한 PC 에서 일반 권한으로 잰 값입니다. 예제(demo) 자료와 다르며, 값마다 단위와 잰 시각을 붙였습니다.', 'student-pc-note'));
+  if (pcState.api === null) {
+    section.append(identityNode('p', '확인 불가: 측정을 요청할 통로가 없어 재지 않았습니다.', 'student-pc-error'));
+    return section;
+  }
+  if (pcState.phase === 'error') {
+    section.append(identityNode('p', `확인 불가: 이 PC 의 상태를 받지 못했습니다. (오류 코드: ${pcState.errorCode})`, 'student-pc-error'));
+  }
+  const latest = pcState.history[0];
+  if (latest === undefined) {
+    if (pcState.phase === 'loading') section.append(identityNode('p', '재는 중입니다…', 'student-pc-loading'));
+  } else {
+    if (pcState.phase === 'loading') section.append(identityNode('p', '다시 재는 중입니다. 아래는 직전 측정입니다.', 'student-pc-loading'));
+    section.append(pcLatestTable(latest, pcState.history[1]));
+    const notes = ['작업 관리자·활동 상태 보기와 값이 조금 다를 수 있습니다. 집계 방식과 갱신 간격이 다르기 때문입니다.'];
+    if (latest.platform === 'darwin') notes.push('macOS 는 캐시로 쓰는 메모리를 남은 메모리에서 빼서 알려 주므로, 메모리 사용량이 활동 상태 보기보다 높게 보일 수 있습니다.');
+    for (const text of notes) section.append(identityNode('p', text, 'student-pc-scope'));
+    if (pcState.history.length > 1) {
+      section.append(identityNode('p', `최근 측정 (최신순, 최대 ${PC_HISTORY_MAX}번, 화면을 새로고침하면 사라집니다)`, 'student-pc-scope'));
+      section.append(pcHistoryTable(pcState.history));
+    }
+  }
+  section.append(identityNode('p', '화면을 열 때 한 번 재고, 그 뒤에는 아래 버튼을 직접 누를 때만 잽니다.', 'student-pc-scope'));
+  const button = identityNode('button', 'PC 상태 다시 재기');
+  button.type = 'button';
+  if (pcState.phase === 'loading') button.disabled = true;
+  button.addEventListener('click', () => pcMeasure(true));
+  section.append(button);
+  return section;
+}
+
 function statusView(input) {
   const { devices, sessions, notifications, diagnostics, mode } = input !== null && typeof input === 'object' ? input : {};
   const root = identityNode('section', undefined, 'student-status');
   root.setAttribute('aria-label', '기기·세션·알림·도움정보');
+  root.append(pcStatusSection());
   const topMode = typeof mode === 'string' ? mode : null;
   if (topMode !== null && Object.hasOwn(STATUS_MODE_NOTICE, topMode)) root.append(identityNode('p', STATUS_MODE_NOTICE[topMode], 'student-status-mode'));
   root.append(statusGroup('기기', '기기 정보', statusResource(devices), topMode, '등록된 기기가 없습니다.', (rows) => statusList(rows, (device) => `${identityNamed(device)} · ${identityStatus(DEVICE_STATUS_TEXT, device?.status)}`)));
@@ -993,7 +1175,13 @@ function vulnerabilitiesView(input) {
   return root;
 }
 
-export function createStudentView() {
+export function createStudentView(host) {
+  // 2일차: 화면이 허락한 조회 통로(api.get)와 다시 그리기(onChange)를 받아 내 PC 상태 측정에 씁니다.
+  Object.assign(pcState, {
+    api: typeof host?.api?.get === 'function' ? host.api : null,
+    onChange: typeof host?.onChange === 'function' ? host.onChange : null,
+    phase: 'idle', seq: pcState.seq + 1, errorCode: null, history: [],
+  });
   return {
     renderIdentity(input) {
       const { me, devices, sessions } = input ?? {};

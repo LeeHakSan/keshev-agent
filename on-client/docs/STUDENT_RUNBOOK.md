@@ -33,10 +33,11 @@ keshev-agent/                      ← Git 최상위 (원격: https://github.com
     ├── .env.example               ← 비밀 없는 설정 견본 (제공)
     ├── README.md, docs/           ← 제공 문서 (수정하지 않음)
     │   └── STUDENT_RUNBOOK.md     ← 이 문서 (학생 작성)
-    ├── public/                    ← 브라우저 화면 (제공): index.html, app.js, vulnerabilities-view.mjs
-    ├── src/                       ← 로컬 앱 서버 (제공): server.mjs, ai/, actions/, connection/, vulnerabilities/ ...
+    ├── public/                    ← 브라우저 화면 (제공): index.html, app.js, vulnerabilities-view.mjs  (app.js 에 학생이 한 줄 추가: 완성본 2일차)
+    ├── src/                       ← 로컬 앱 서버 (제공): server.mjs, ai/, actions/, connection/, vulnerabilities/ ...  (server.mjs 에 학생이 경로 1개 추가: 완성본 2일차)
     ├── student/
-    │   ├── extension.mjs          ← 학생이 작성한 화면 표시 함수 (13~20단계)
+    │   ├── extension.mjs          ← 학생이 작성한 화면 표시 함수 (13~20단계, 완성본 2일차 「내 PC 상태」 포함)
+    │   ├── pc-status.mjs          ← 학생이 작성한 PC 상태 측정 (완성본 2일차, 서버가 불러 씀)
     │   └── engine-adapter.mjs     ← 접속 판정 시스템 연결 어댑터 (제공, 수정하지 않음)
     ├── tools/                     ← PowerShell 실행 도구 (제공)
     └── vendor/                    ← 제공 라이브러리
@@ -100,6 +101,7 @@ flowchart LR
    │  ① 서버에 요청: /api/me /api/apps /api/events /api/devices /api/sessions
    │                  /api/access(POST) /api/ai/check(POST) /api/ai/explain(POST)
    │                  /api/vulnerabilities /api/diagnostics
+   │                  /api/pc-status  (완성본 2일차: 학생 renderStatus 가 허용된 통로 api.get 으로 요청)
    ▼
 로컬 앱 서버 (src/server.mjs, 127.0.0.1:5189)
    ├─▶ 접근 제어·XDR 연동 시스템  (student/engine-adapter.mjs → 호스트)   ※ 연결 없으면 ENGINE_NOT_CONNECTED
@@ -108,24 +110,25 @@ flowchart LR
    ▲
    │  ② 서버가 돌려준 값을 브라우저가 검사한 뒤
 브라우저 ──▶ student/extension.mjs 의 renderXxx(값) ──▶ DOM 요소 ──▶ 화면의 학생 칸에 표시
-            (학생 함수는 서버에 요청하지 않고 받은 값만 그림. 단, renderEvents 는 선택 상자와 「<기록 ID> 상세」·「<조치> 미지원」 버튼을,
-             renderStatus 는 「도움정보 복사」 버튼과 복사 실패 시 읽기 전용 textarea 를 만듦. 이 버튼들은 화면 안의 표시·복사만 하고 서버 요청을 보내지 않음)
+            (학생 함수는 대부분 서버에 요청하지 않고 받은 값만 그림. 예외: renderStatus 의 「내 PC 상태」만 /api/pc-status 를 요청함. 또 renderEvents 는 선택 상자와 「<기록 ID> 상세」·「<조치> 미지원」 버튼을,
+             renderStatus 는 「도움정보 복사」 버튼과 복사 실패 시 읽기 전용 textarea 를 만듦. 이 버튼들은 화면 안의 표시·복사만 하고 서버 요청을 보내지 않음. renderStatus 의 「PC 상태 다시 재기」 버튼만 /api/pc-status 를 요청함)
 ```
 
 ### 5-3. 같은 내용 (표)
 
 | 구성 요소 | 실제 파일·주소 | 하는 일 | 학생 작성 여부 |
 |---|---|---|---|
-| 브라우저 화면 | `public/index.html`, `public/app.js`, `public/vulnerabilities-view.mjs` | 버튼·요청·상태 관리, 서버 응답 검사, 학생 함수 호출 | 제공 (수정하지 않음) |
-| 로컬 앱 서버 | `src/server.mjs`, `http://127.0.0.1:5189` | API 제공, 연동 시스템·AI·OSV 중계 | 제공 |
+| 브라우저 화면 | `public/index.html`, `public/app.js`, `public/vulnerabilities-view.mjs` | 버튼·요청·상태 관리, 서버 응답 검사, 학생 함수 호출 | 제공 (학생이 `STUDENT_GET_PATHS` 에 `/api/pc-status` 한 줄만 추가. 그 밖은 수정하지 않음) |
+| 로컬 앱 서버 | `src/server.mjs`, `http://127.0.0.1:5189` | API 제공, 연동 시스템·AI·OSV 중계 | 제공 (학생이 `GET /api/pc-status` 경로와 import 한 줄을 추가. 그 밖은 수정하지 않음) |
 | 접근 제어·XDR 연동 | `student/engine-adapter.mjs`, `src/engine/*` | 로그인·기기·세션·접근 판정·기록 조회 | 제공 (연결은 신뢰된 호스트가 구성) |
 | AI 게이트웨이 | `src/ai/*` | 연결 점검, 사건 설명 요청 | 제공 (권한은 운영자가 준비) |
 | OSV 조회 | `src/vulnerabilities/*` → `https://api.osv.dev/v1/querybatch` | 승인된 공개 npm 패키지의 정확한 버전 대조 | 제공 |
-| 화면 표시 함수 | `student/extension.mjs` | 받은 값을 DOM 으로 표시. 선택 상자·상세 버튼·복사 버튼 같은 화면 안 조작 요소는 만들지만 서버 요청은 보내지 않음 | **학생 작성** |
+| 화면 표시 함수 | `student/extension.mjs` | 받은 값을 DOM 으로 표시. 선택 상자·상세 버튼·복사 버튼 같은 화면 안 조작 요소를 만듦. 서버 요청은 「내 PC 상태」의 `/api/pc-status` 조회만 보냄 | **학생 작성** |
+| PC 상태 측정 | `student/pc-status.mjs` → `GET /api/pc-status` | 서버를 실행한 PC 의 CPU·메모리·디스크를 일반 권한으로 한 번 재서 값마다 단위·잰 시각과 함께 돌려줌. 못 읽으면 확인 불가와 이유 코드 | **학생 작성** (완성본 2일차) |
 
 ## 6. 구현한 함수 · 제공 코드 경계 · 확인한 기능
 
-학생이 바꾼 파일은 `student/extension.mjs` 한 개입니다. 제공 서버·`public/app.js`·판정 코드·인증 설정은 수정하지 않았습니다.
+13~22단계 제출본(커밋 `e9d52063…`)까지 학생이 바꾼 파일은 `student/extension.mjs` 한 개였습니다. 완성본 2일차에 `student/pc-status.mjs` 를 새로 만들고, 제공 파일 두 곳에 한 줄씩 추가했습니다: `src/server.mjs`(import 1줄과 `GET /api/pc-status` 경로 1개), `public/app.js`(`STUDENT_GET_PATHS` 에 `'/api/pc-status'` 추가). 판정 코드·인증 설정은 수정하지 않았습니다.
 
 | 단계 | 함수 | 보여 주는 것 | 코드 확인 | 모의 데이터 점검 | 실제 화면(예제 서버) |
 |---|---|---|---|---|---|
@@ -137,10 +140,11 @@ flowchart LR
 | 17~18 | `renderExplanation` | 근거·규칙·확인 불가 상태와 함께 AI 사건 설명 | 함 | 함 | 실패 화면만 확인 |
 | 19 | `renderAction` | 조치 제안·접수(ACK)·효과 확인·결과 불명 구분 | 함 | 함 | idle 화면만 확인 |
 | 20 | `renderVulnerabilities` | 설치 패키지 버전과 OSV 조회 상태 | 함 | 함 | `not_configured` 화면만 확인 |
+| 완성본 2일차 | `renderStatus` 의 「내 PC 상태」 | 이 PC 의 CPU·메모리·디스크 실측값, 잰 시각, 직전 대비, 최근 5번 | 함 | 함 | 함 (예제·연결 없음 두 모드 모두, 운영체제 도구 값과 대조) |
 
 - 점검 방법: `node --check`, 가짜 DOM 으로 입력을 바꿔 가며 표시를 확인하는 임시 스크립트(저장소에는 넣지 않음), 코드를 일부러 망가뜨려 점검이 잡는지 보는 변형 점검, 실제 브라우저에서 예제 서버 확인.
-- 학생 함수의 규칙: `createElement`·`textContent`만 사용, `innerHTML` 계열 없음, 서버 요청(`fetch` 등)·타이머 없음, 호출마다 새 DOM 이라 이전 값이 남지 않음, 비밀값 모양은 `[가림]`으로 가림.
-- 학생 코드가 만드는 조작 요소(모두 서버 요청을 보내지 않음, 실제 코드 위치로 확인함):
+- 학생 함수의 규칙: `createElement`·`textContent`만 사용, `innerHTML` 계열 없음, 직접 `fetch` 나 타이머 없음(2일차의 「내 PC 상태」만 제공 `api.get` 통로로 `/api/pc-status` 를 요청), 호출마다 새 DOM 이라 이전 값이 남지 않음, 비밀값 모양은 `[가림]`으로 가림.
+- 학생 코드가 만드는 조작 요소(「PC 상태 다시 재기」만 `/api/pc-status` 요청을 보내고 나머지는 서버 요청을 보내지 않음, 실제 코드 위치로 확인함):
 
   | 함수 | 만드는 요소 | 하는 일 |
   |---|---|---|
@@ -149,14 +153,15 @@ flowchart LR
   | `renderEvents` | 기록에 지원 조치가 있을 때 비활성 「<조치> 미지원」 버튼 | 조치를 실행하지 않음. 눌러도 아무 일도 없고 연결 준비 중이라는 안내만 있음 |
   | `renderStatus` | 「도움정보 복사」 버튼 | 누를 때만 도움정보 6줄을 클립보드에 복사 |
   | `renderStatus` | 복사 실패 시 읽기 전용 textarea | 직접 복사할 값을 보여 줌 |
+  | `renderStatus` | 「PC 상태 다시 재기」 버튼 | 누를 때 `/api/pc-status` 를 한 번 요청해 PC 상태를 다시 잼. 재는 동안 비활성 |
   | 그 밖의 함수 | 없음 | `renderIdentity`·`renderDecision`·`renderAiConnection`·`renderExplanation`·`renderAction`·`renderVulnerabilities` 는 표시만 하고 버튼·입력 칸을 만들지 않음 |
 
-  서버로 가는 요청(조회·점검·설명 요청·집행·재조회·취소)은 모두 제공 `public/app.js` 의 버튼이 보냅니다.
-- 제공 코드와 학생 코드의 경계: 요청·취소·늦은 응답 차단·확인 번호 보관·응답 검증은 제공 `public/app.js` 가 합니다. 학생 함수는 넘어온 값을 표시만 합니다.
+  서버로 가는 요청(조회·점검·설명 요청·집행·재조회·취소)은 제공 `public/app.js` 의 버튼이 보냅니다. 예외는 학생이 만든 「내 PC 상태」의 `/api/pc-status` 조회 하나입니다(화면을 열 때 한 번, 그 뒤에는 「PC 상태 다시 재기」를 누를 때만).
+- 제공 코드와 학생 코드의 경계: 요청·취소·늦은 응답 차단·확인 번호 보관·응답 검증은 제공 `public/app.js` 가 합니다. 학생 함수는 넘어온 값을 표시만 하며, 「내 PC 상태」의 요청 한 가지는 예외입니다(요청은 한 번에 하나만, 늦게 온 예전 응답은 버림).
 
 ### 화면의 버튼 이름 (실제 `public/index.html`·`public/app.js`·`student/extension.mjs` 와 대조함)
 
-「다시 불러오기」「보호 현황」「업무 앱」「보안 기록」「도움정보 불러오기」「도움정보 복사」(학생 칸)「AI 연결 점검」「AI 설명 요청」「설치 패키지 조회」「대상과 조치를 확인했으며 집행합니다」「원천 결과만 재조회」「조치 화면 취소」. 학생 코드 안에 따옴표(「」)로 적힌 버튼 이름은 이 목록과 일치하는지 대조했습니다.
+「다시 불러오기」「보호 현황」「업무 앱」「보안 기록」「도움정보 불러오기」「도움정보 복사」(학생 칸)「AI 연결 점검」「AI 설명 요청」「설치 패키지 조회」「대상과 조치를 확인했으며 집행합니다」「원천 결과만 재조회」「조치 화면 취소」「PC 상태 다시 재기」(학생 칸). 학생 코드 안에 따옴표(「」)로 적힌 버튼 이름은 이 목록과 일치하는지 대조했습니다.
 
 ## 7. 오류별 확인 순서
 
