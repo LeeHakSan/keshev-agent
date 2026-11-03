@@ -468,7 +468,8 @@ function statusDiagnostics(resource) {
 // 알림: 항목마다 어느 자료(resource)의 알림인지, 안전한 code, message 를 보여 줍니다.
 function statusNotifications(list) {
   const group = identityNode('section', undefined, 'student-status-group');
-  group.append(identityNode('h4', '알림'));
+  group.append(uiHeading('위험 알림'));
+  group.append(uiNote('서버가 알려 준 기기·세션·기록의 주의 항목을 모았습니다. 침해나 공격을 판정한 결과가 아닙니다.', 'student-status-scope'));
   if (!Array.isArray(list)) {
     group.append(identityNode('p', '확인 불가: 알림 목록을 읽을 수 없습니다.', 'student-status-unverified'));
   } else if (list.length === 0) {
@@ -597,6 +598,7 @@ function pcStyleTable(table) {
 
 function pcLatestTable(latest, previous) {
   const table = identityNode('table', undefined, 'student-pc-table');
+  table.setAttribute('aria-label', '내 PC 상태 값 표');
   const head = identityNode('tr');
   for (const title of ['항목', '값', '잰 시각', '직전 대비', '설명']) {
     head.append(identityNode('th', title));
@@ -615,6 +617,7 @@ function pcLatestTable(latest, previous) {
 
 function pcHistoryTable(history) {
   const table = identityNode('table', undefined, 'student-pc-history');
+  table.setAttribute('aria-label', '최근 PC 상태 측정 표');
   const head = identityNode('tr');
   for (const title of ['잰 시각', 'CPU 사용률', '메모리 사용률', '디스크 남은 공간']) {
     head.append(identityNode('th', title));
@@ -632,39 +635,137 @@ function pcHistoryTable(history) {
   return pcStyleTable(table);
 }
 
+// ---------- 완성본 4일차: 화면 정리(핵심 3가지 먼저), 다시 조회·대기 표시, 실패 화면, 키보드 ----------
+// 색과 크기는 제공 style.css 의 변수(var(--...))를 쓰되, 제공 CSS 파일은 바꾸지 않고 이 파일 안에서 정합니다.
+// 실패하면 예시 값으로 채우지 않고 실패한 항목·이유·다음에 할 일을 보여 줍니다. 직전 성공 값은 "직전 값"이라고 따로 표시합니다.
+const PC_ITEMS = Object.freeze(['CPU 사용률', '메모리 사용량', '디스크 남은 공간']);
+const SEC_ITEMS = Object.freeze(['네트워크 연결', '방화벽 설정', 'Windows System 기록', 'Windows Application 기록']);
+const UI_NOT_APPLICABLE = new Set(['WINDOWS_ONLY', 'NOT_SUPPORTED']);
+const UI_STEP_BY_REASON = Object.freeze({
+  PERMISSION_DENIED: '관리자 권한으로 바꾸거나 설정을 고치지 마세요. 일반 권한으로 읽은 항목만 쓰고, 꼭 필요하면 담당자에게 확인하세요.',
+  TIMEOUT: '잠시 뒤 「다시 조회」를 한 번 눌러 보세요.',
+  NOT_FOUND: '서버를 프로젝트 폴더(on-client)에서 실행했는지 확인한 뒤 「다시 조회」를 누르세요.',
+  READ_FAILED: '「다시 조회」를 눌러 보세요. 계속되면 이 항목은 확인 불가로 두고 넘어가세요.',
+  UNVERIFIED: '서버를 껐다 켠 뒤(터미널에서 Ctrl+C, 다시 실행) 「다시 조회」를 누르세요.',
+});
+const UI_RETRY_AFTER_RELOAD = '화면을 새로고침한 뒤 「다시 조회」를 누르세요. 계속되면 서버를 껐다 켜세요.';
+const UI_STEP_BY_CODE = Object.freeze({
+  NETWORK_ERROR: '서버가 꺼졌을 수 있습니다. 서버를 켠 터미널을 확인하고, 꺼졌다면 `npm run demo`(또는 `npm start`)로 다시 켠 뒤 「다시 조회」를 누르세요.',
+  TIMEOUT: '잠시 기다린 뒤 「다시 조회」를 한 번 누르세요. 계속되면 PC 가 바쁜지 확인하세요.',
+  NOT_FOUND: '서버가 이 기능이 없는 예전 코드로 켜져 있을 수 있습니다. 서버를 Ctrl+C 로 끄고 다시 실행한 뒤 「다시 조회」를 누르세요.',
+  INVALID_RESPONSE: UI_RETRY_AFTER_RELOAD,
+  CANCELLED: UI_RETRY_AFTER_RELOAD,
+  UNVERIFIED: UI_RETRY_AFTER_RELOAD,
+});
+const UI_STEP_DEFAULT = '「다시 조회」를 눌러 보세요. 계속되면 오류 코드를 복사해 AI 에게 보여 주세요.';
+
+function uiStyle(node, props) {
+  Object.assign(node.style, props);
+  return node;
+}
+function uiPanel(tag, className) {
+  return uiStyle(identityNode(tag, undefined, className), {
+    border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px', margin: '12px 0', background: 'var(--surface)',
+  });
+}
+function uiHeading(text, tag = 'h4') {
+  return uiStyle(identityNode(tag, text), { fontSize: tag === 'h3' ? '1.15rem' : '1.05rem', margin: '0 0 8px' });
+}
+function uiNote(text, className) {
+  return uiStyle(identityNode('p', text, className), { color: 'var(--muted)', fontSize: '0.9rem', margin: '6px 0' });
+}
+// 조회 중에도 키보드 포커스가 남도록 disabled 대신 aria-disabled 를 씁니다(누르면 아무 일도 하지 않음).
+// 화면이 다시 그려질 때 이 버튼에 포커스가 있었다면 새 버튼으로 포커스를 되돌립니다.
+function uiButton(label, busyLabel, key, busy, onClick) {
+  const button = identityNode('button', busy ? busyLabel : label);
+  button.type = 'button';
+  button.setAttribute('data-student-key', key);
+  if (busy) button.setAttribute('aria-disabled', 'true');
+  uiStyle(button, { minHeight: '40px', padding: '8px 16px', fontSize: '1rem', cursor: busy ? 'progress' : 'pointer', margin: '8px 8px 0 0' });
+  button.addEventListener('click', () => { if (!busy) onClick(); });
+  if (globalThis.document?.activeElement?.getAttribute?.('data-student-key') === key) queueMicrotask(() => button.focus());
+  return button;
+}
+
+// 실패 화면: 실패한 항목, 이유, 다음에 할 일. urgent 는 요청 전체가 실패한 경우(즉시 알림).
+function uiFailure({ urgent, title, failed, steps }) {
+  const box = uiStyle(identityNode('div', undefined, 'student-failure'), {
+    borderLeft: `4px solid ${urgent ? 'var(--deny)' : 'var(--challenge)'}`, background: urgent ? 'var(--deny-soft)' : 'var(--challenge-soft)',
+    padding: '8px 12px', margin: '8px 0', borderRadius: 'var(--radius)',
+  });
+  if (urgent) box.setAttribute('role', 'alert');
+  box.append(uiStyle(identityNode('p', title), { fontWeight: '700', margin: '0 0 4px' }));
+  const list = identityNode('ul');
+  for (const item of failed) list.append(identityNode('li', `${item.label} — ${item.why}`));
+  box.append(list);
+  box.append(uiStyle(identityNode('p', '다음에 할 일'), { fontWeight: '700', margin: '8px 0 4px' }));
+  const todo = identityNode('ol');
+  for (const step of steps) todo.append(identityNode('li', step));
+  box.append(todo);
+  return box;
+}
+
+function uiRequestFailure(items, code) {
+  return uiFailure({
+    urgent: true,
+    title: '조회에 실패했습니다. 아래 값은 읽지 못했고, 예시 값으로 대신하지 않았습니다.',
+    failed: items.map((label) => ({ label, why: `요청 전체가 실패했습니다 (오류 코드: ${code})` })),
+    steps: [UI_STEP_BY_CODE[code] ?? UI_STEP_DEFAULT],
+  });
+}
+
+// 항목 하나씩 읽지 못한 경우. Windows 전용처럼 이 PC 에 해당 없는 항목은 실패로 세지 않고 따로 안내합니다.
+function uiItemFailures(pairs) {
+  const failed = []; const steps = new Set(); const notApplicable = [];
+  for (const [label, metric] of pairs) {
+    if (metric.ok) continue;
+    if (UI_NOT_APPLICABLE.has(metric.reason)) { notApplicable.push(label); continue; }
+    failed.push({ label, why: PC_REASON_TEXT[metric.reason] });
+    steps.add(UI_STEP_BY_REASON[metric.reason] ?? UI_STEP_DEFAULT);
+  }
+  const nodes = [];
+  if (failed.length > 0) nodes.push(uiFailure({ urgent: false, title: '읽지 못한 항목이 있습니다. 예시 값으로 대신하지 않았습니다.', failed, steps: [...steps] }));
+  if (notApplicable.length > 0) nodes.push(uiNote(`이 PC 에서 해당 없는 항목: ${notApplicable.join(', ')} (확인 불가로 표시했고 조치는 필요 없습니다)`, 'student-pc-scope'));
+  return nodes;
+}
+
+function uiStatusLine(text) {
+  const line = uiStyle(identityNode('p', text, 'student-pc-loading'), { margin: '6px 0', fontWeight: '600' });
+  line.setAttribute('role', 'status');
+  return line;
+}
+
 function pcStatusSection() {
   if (pcState.phase === 'idle') pcMeasure(false);
-  const section = identityNode('section', undefined, 'student-pc-status');
+  const busy = pcState.phase === 'loading';
+  const section = uiPanel('section', 'student-pc-status');
   section.setAttribute('aria-label', '내 PC 상태');
-  section.append(identityNode('h4', '내 PC 상태'));
-  section.append(identityNode('p', '실측값: 이 서버를 실행한 PC 에서 일반 권한으로 잰 값입니다. 예제(demo) 자료와 다르며, 값마다 단위와 잰 시각을 붙였습니다.', 'student-pc-note'));
+  if (busy) section.setAttribute('aria-busy', 'true');
+  section.append(uiHeading('내 PC 상태'));
+  section.append(uiNote('실측값: 이 서버를 실행한 PC 에서 일반 권한으로 잰 값입니다. 예제(demo) 자료와 다르며, 값마다 단위와 잰 시각을 붙였습니다.', 'student-pc-note'));
   if (pcState.api === null) {
-    section.append(identityNode('p', '확인 불가: 측정을 요청할 통로가 없어 재지 않았습니다.', 'student-pc-error'));
+    section.append(uiFailure({ urgent: true, title: '조회하지 못했습니다. 예시 값으로 대신하지 않았습니다.',
+      failed: PC_ITEMS.map((label) => ({ label, why: '측정을 요청할 통로가 없어 재지 않았습니다.' })), steps: [UI_RETRY_AFTER_RELOAD] }));
     return section;
   }
-  if (pcState.phase === 'error') {
-    section.append(identityNode('p', `확인 불가: 이 PC 의 상태를 받지 못했습니다. (오류 코드: ${pcState.errorCode})`, 'student-pc-error'));
-  }
   const latest = pcState.history[0];
-  if (latest === undefined) {
-    if (pcState.phase === 'loading') section.append(identityNode('p', '재는 중입니다…', 'student-pc-loading'));
-  } else {
-    if (pcState.phase === 'loading') section.append(identityNode('p', '다시 재는 중입니다. 아래는 직전 측정입니다.', 'student-pc-loading'));
+  if (pcState.phase === 'error') section.append(uiRequestFailure(PC_ITEMS, pcState.errorCode));
+  if (busy) section.append(uiStatusLine(latest === undefined ? '조회 중입니다…' : '다시 조회하는 중입니다. 아래는 직전에 읽은 값입니다.'));
+  if (latest !== undefined) {
+    if (pcState.phase === 'error') section.append(uiStyle(identityNode('p', `아래는 직전에 읽은 값(${latest.cpu.time ?? '시각 확인 불가'})이며 지금 값이 아닙니다.`, 'student-pc-stale'), { fontWeight: '600', margin: '6px 0' }));
     section.append(pcLatestTable(latest, pcState.history[1]));
+    for (const node of uiItemFailures([[PC_ITEMS[0], latest.cpu], [PC_ITEMS[1], latest.memory], [PC_ITEMS[2], latest.disk]])) section.append(node);
     const notes = ['작업 관리자·활동 상태 보기와 값이 조금 다를 수 있습니다. 집계 방식과 갱신 간격이 다르기 때문입니다.'];
     if (latest.platform === 'darwin') notes.push('macOS 는 캐시로 쓰는 메모리를 남은 메모리에서 빼서 알려 주므로, 메모리 사용량이 활동 상태 보기보다 높게 보일 수 있습니다.');
-    for (const text of notes) section.append(identityNode('p', text, 'student-pc-scope'));
+    for (const text of notes) section.append(uiNote(text, 'student-pc-scope'));
     if (pcState.history.length > 1) {
-      section.append(identityNode('p', `최근 측정 (최신순, 최대 ${PC_HISTORY_MAX}번, 화면을 새로고침하면 사라집니다)`, 'student-pc-scope'));
+      section.append(uiNote(`최근 측정 (최신순, 최대 ${PC_HISTORY_MAX}번, 화면을 새로고침하면 사라집니다)`, 'student-pc-scope'));
       section.append(pcHistoryTable(pcState.history));
     }
+    if (pcState.phase === 'done') section.append(uiStatusLine(`조회 완료: ${latest.cpu.time ?? '시각 확인 불가'} 기준`));
   }
-  section.append(identityNode('p', '화면을 열 때 한 번 재고, 그 뒤에는 아래 버튼을 직접 누를 때만 잽니다.', 'student-pc-scope'));
-  const button = identityNode('button', 'PC 상태 다시 재기');
-  button.type = 'button';
-  if (pcState.phase === 'loading') button.disabled = true;
-  button.addEventListener('click', () => pcMeasure(true));
-  section.append(button);
+  section.append(uiNote('화면을 열 때 한 번 조회하고, 그 뒤에는 「다시 조회」 버튼을 직접 누를 때만 조회합니다.', 'student-pc-scope'));
+  section.append(uiButton('PC 상태 다시 조회', '조회 중…', 'pc', busy, () => pcMeasure(true)));
   return section;
 }
 
@@ -722,6 +823,7 @@ function secRow(table, label, metric, valueText, detail, platform) {
 
 function secTable(sample) {
   const table = identityNode('table', undefined, 'student-sec-table');
+  table.setAttribute('aria-label', '연결과 기록 값 표');
   const head = identityNode('tr');
   for (const title of ['항목', '값', '읽은 시각', '설명']) {
     head.append(identityNode('th', title));
@@ -745,52 +847,110 @@ function secTable(sample) {
 
 function securitySection(mode) {
   if (secState.phase === 'idle') secLoad(false);
-  const section = identityNode('section', undefined, 'student-sec-status');
+  const busy = secState.phase === 'loading';
+  const section = uiPanel('section', 'student-sec-status');
   section.setAttribute('aria-label', '연결과 기록');
-  section.append(identityNode('h4', '연결과 기록'));
-  section.append(identityNode('p', '실측값: 이 서버를 실행한 PC 에서 읽기만 한 값입니다. 방화벽·보안 설정은 바꾸지 않고, 관리자 권한이 필요한 항목은 읽지 않습니다. 예제(demo) 자료와 다릅니다.', 'student-pc-note'));
-  section.append(identityNode('p', '주의: 경고·오류 건수는 운영체제가 남긴 기록의 개수일 뿐이며, 침해나 공격을 탐지한 결과가 아닙니다.', 'student-sec-warning'));
+  if (busy) section.setAttribute('aria-busy', 'true');
+  section.append(uiHeading('연결과 기록'));
+  section.append(uiNote('실측값: 이 서버를 실행한 PC 에서 읽기만 한 값입니다. 방화벽·보안 설정은 바꾸지 않고, 관리자 권한이 필요한 항목은 읽지 않습니다. 예제(demo) 자료와 다릅니다.', 'student-pc-note'));
+  section.append(uiStyle(identityNode('p', '주의: 경고·오류 건수는 운영체제가 남긴 기록의 개수일 뿐이며, 침해나 공격을 탐지한 결과가 아닙니다.', 'student-sec-warning'), { fontWeight: '600', margin: '6px 0' }));
   // PC 조회 결과와 섞지 않는 SDP 연결 상태
   const sdp = identityNode('div', undefined, 'student-sdp');
-  sdp.append(identityNode('p', SEC_SDP_TEXT[Object.hasOwn(SEC_SDP_TEXT, mode) ? mode : 'unknown'], 'student-sdp-state'));
-  sdp.append(identityNode('p', 'SDP 연결 상태는 아래 PC 조회 결과와 별개입니다. SDP 가 연결되지 않아도 아래 값은 이 PC 에서 읽은 실측값이고, PC 조회가 성공했다고 SDP 가 연결된 것은 아닙니다.', 'student-pc-scope'));
+  sdp.append(uiStyle(identityNode('p', SEC_SDP_TEXT[Object.hasOwn(SEC_SDP_TEXT, mode) ? mode : 'unknown'], 'student-sdp-state'), { fontWeight: '600', margin: '6px 0' }));
+  sdp.append(uiNote('SDP 연결 상태는 아래 PC 조회 결과와 별개입니다. SDP 가 연결되지 않아도 아래 값은 이 PC 에서 읽은 실측값이고, PC 조회가 성공했다고 SDP 가 연결된 것은 아닙니다.', 'student-pc-scope'));
   section.append(sdp);
   if (secState.api === null) {
-    section.append(identityNode('p', '확인 불가: 읽기를 요청할 통로가 없어 읽지 않았습니다.', 'student-pc-error'));
+    section.append(uiFailure({ urgent: true, title: '조회하지 못했습니다. 예시 값으로 대신하지 않았습니다.',
+      failed: SEC_ITEMS.map((label) => ({ label, why: '읽기를 요청할 통로가 없어 읽지 않았습니다.' })), steps: [UI_RETRY_AFTER_RELOAD] }));
     return section;
   }
-  if (secState.phase === 'error') {
-    section.append(identityNode('p', `확인 불가: 이 PC 의 연결·기록을 받지 못했습니다. (오류 코드: ${secState.errorCode})`, 'student-pc-error'));
-  }
   const latest = secState.history[0];
-  if (latest === undefined) {
-    if (secState.phase === 'loading') section.append(identityNode('p', '읽는 중입니다…', 'student-pc-loading'));
-  } else {
-    if (secState.phase === 'loading') section.append(identityNode('p', '다시 읽는 중입니다. 아래는 직전에 읽은 값입니다.', 'student-pc-loading'));
+  if (secState.phase === 'error') section.append(uiRequestFailure(SEC_ITEMS, secState.errorCode));
+  if (busy) section.append(uiStatusLine(latest === undefined ? '조회 중입니다…' : '다시 조회하는 중입니다. 아래는 직전에 읽은 값입니다.'));
+  if (latest !== undefined) {
+    if (secState.phase === 'error') section.append(uiStyle(identityNode('p', `아래는 직전에 읽은 값(${latest.network.time ?? '시각 확인 불가'})이며 지금 값이 아닙니다.`, 'student-pc-stale'), { fontWeight: '600', margin: '6px 0' }));
     section.append(secTable(latest));
+    for (const node of uiItemFailures([[SEC_ITEMS[0], latest.network], [SEC_ITEMS[1], latest.firewall], [SEC_ITEMS[2], latest.system], [SEC_ITEMS[3], latest.application]])) section.append(node);
+    if (secState.phase === 'done') section.append(uiStatusLine(`조회 완료: ${latest.network.time ?? '시각 확인 불가'} 기준`));
   }
-  section.append(identityNode('p', '화면을 열 때 한 번 읽고, 그 뒤에는 아래 버튼을 직접 누를 때만 읽습니다.', 'student-pc-scope'));
-  const button = identityNode('button', '연결·기록 다시 읽기');
-  button.type = 'button';
-  if (secState.phase === 'loading') button.disabled = true;
-  button.addEventListener('click', () => secLoad(true));
-  section.append(button);
+  section.append(uiNote('화면을 열 때 한 번 조회하고, 그 뒤에는 「다시 조회」 버튼을 직접 누를 때만 조회합니다.', 'student-pc-scope'));
+  section.append(uiButton('연결·기록 다시 조회', '조회 중…', 'sec', busy, () => secLoad(true)));
+  return section;
+}
+
+// 핵심 3가지(기록 보기 → 내 PC 상태 → 위험 알림)를 한 줄 요약으로 먼저 보여 줍니다.
+const UI_SOURCE_TEXT = Object.freeze({ demo: '예제(demo) 자료', disconnected: '연결 없음', connected: '서버가 알려 준 값', unknown: '확인 불가' });
+
+function uiTile(order, title, badge) {
+  const tile = uiStyle(identityNode('section', undefined, 'student-tile'), {
+    border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px', background: 'var(--bg)',
+  });
+  tile.setAttribute('aria-label', `${order}. ${title}`);
+  tile.append(uiHeading(`${order}. ${title}`));
+  if (badge) tile.append(uiStyle(identityNode('p', badge, 'student-tile-badge'), { color: 'var(--muted)', fontSize: '0.85rem', margin: '0 0 6px' }));
+  return tile;
+}
+function uiBig(text, muted) {
+  return uiStyle(identityNode('p', text, 'student-tile-value'), { fontSize: '1.4rem', fontWeight: '700', margin: '2px 0', color: muted ? 'var(--muted)' : 'var(--text)' });
+}
+function uiSmall(text) {
+  return uiStyle(identityNode('p', text), { color: 'var(--muted)', fontSize: '0.85rem', margin: '2px 0' });
+}
+
+function summarySection(notifications, mode) {
+  const section = identityNode('section', undefined, 'student-summary');
+  section.setAttribute('aria-label', '핵심 3가지 한눈에 보기');
+  section.append(uiHeading('핵심 3가지 한눈에 보기', 'h3'));
+  section.append(uiNote('이 PC 의 상태를 읽어 보여 줍니다. 「실측」은 이 PC 에서 직접 읽은 값이고, 「예제(demo)」는 설명용 값입니다. 값 옆의 시각은 읽은 시각입니다. Tab 키로 버튼에 이동하고 Enter 키로 누릅니다.', 'student-summary-help'));
+  const busy = pcState.phase === 'loading' || secState.phase === 'loading';
+  section.append(uiButton('전체 다시 조회', '조회 중…', 'all', busy, () => {
+    pcRequest(pcState, '/api/pc-status', pcSample, PC_HISTORY_MAX, false);
+    secLoad(false);
+    pcState.onChange?.();
+  }));
+  const grid = uiStyle(identityNode('div', undefined, 'student-tiles'), { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', margin: '12px 0' });
+
+  const records = uiTile(1, '기록 보기');
+  records.append(uiBig('보안 기록', true));
+  records.append(uiSmall('접속·XDR 기록 목록과 상세는 왼쪽 메뉴 「보안 기록」에서 봅니다. 이 칸은 기록 건수를 세지 않습니다.'));
+  grid.append(records);
+
+  const pc = uiTile(2, '내 PC 상태', '실측 · 이 PC 에서 읽은 값');
+  const latest = pcState.history[0];
+  if (pcState.api === null) pc.append(uiBig('확인 불가', true), uiSmall('측정을 요청할 통로가 없습니다.'));
+  else if (latest === undefined) pc.append(uiBig(pcState.phase === 'error' ? '조회 실패' : '조회 중…', true), uiSmall(pcState.phase === 'error' ? '아래 「내 PC 상태」의 실패 안내를 보세요. 예시 값은 쓰지 않았습니다.' : '값을 읽는 중입니다.'));
+  else {
+    const line = (label, metric, text) => pc.append(uiBig(`${label} ${metric.ok ? text : '확인 불가'}`, !metric.ok));
+    line('CPU', latest.cpu, `${latest.cpu.percent} %`);
+    line('메모리', latest.memory, `${latest.memory.percent} % 사용`);
+    line('디스크', latest.disk, `${pcGb(latest.disk.freeBytes)} 남음`);
+    pc.append(uiSmall(pcState.phase === 'error' ? `직전에 읽은 값 (${latest.cpu.time ?? '시각 확인 불가'}) · 최근 조회 실패` : `${latest.cpu.time ?? '시각 확인 불가'}에 읽음`));
+  }
+  grid.append(pc);
+
+  const alerts = uiTile(3, '위험 알림', UI_SOURCE_TEXT[Object.hasOwn(UI_SOURCE_TEXT, mode) ? mode : 'unknown']);
+  if (!Array.isArray(notifications)) alerts.append(uiBig('확인 불가', true), uiSmall('알림 목록을 읽을 수 없습니다.'));
+  else alerts.append(uiBig(notifications.length === 0 ? '주의할 알림 없음' : `주의 · ${notifications.length}건`, false), uiSmall('기기·세션·기록에서 서버가 알려 준 주의 항목 수입니다. 침해나 공격 판정이 아닙니다.'));
+  grid.append(alerts);
+  section.append(grid);
   return section;
 }
 
 function statusView(input) {
   const { devices, sessions, notifications, diagnostics, mode } = input !== null && typeof input === 'object' ? input : {};
   const root = identityNode('section', undefined, 'student-status');
-  root.setAttribute('aria-label', '기기·세션·알림·도움정보');
-  root.append(pcStatusSection());
-  root.append(securitySection(typeof mode === 'string' ? mode : null));
+  root.setAttribute('aria-label', '핵심 3가지와 기기·세션·알림·도움정보');
   const topMode = typeof mode === 'string' ? mode : null;
+  root.append(summarySection(notifications, topMode));
+  root.append(uiHeading('자세히 보기', 'h3'));
+  root.append(pcStatusSection());
+  root.append(statusNotifications(notifications));
+  root.append(securitySection(topMode));
   if (topMode !== null && Object.hasOwn(STATUS_MODE_NOTICE, topMode)) root.append(identityNode('p', STATUS_MODE_NOTICE[topMode], 'student-status-mode'));
   root.append(statusGroup('기기', '기기 정보', statusResource(devices), topMode, '등록된 기기가 없습니다.', (rows) => statusList(rows, (device) => `${identityNamed(device)} · ${identityStatus(DEVICE_STATUS_TEXT, device?.status)}`)));
   root.append(identityNode('p', '기기는 내 이름으로 등록되고 회수되지 않은 기기이며 100개까지 보입니다.', 'student-status-scope'));
   root.append(statusGroup('세션', '세션 정보', statusResource(sessions), topMode, '현재 연결이 없습니다.', (rows) => statusList(rows, (session) => `${identityText(session?.id) ?? '확인 불가'} · ${identityStatus(SESSION_STATUS_TEXT, session?.status)}`)));
   root.append(identityNode('p', '세션은 지금 검증된 연결 한 개만 보입니다. 지난 세션 목록이 아닙니다.', 'student-status-scope'));
-  root.append(statusNotifications(notifications));
   root.append(statusDiagnostics(statusResource(diagnostics)));
   return root;
 }
