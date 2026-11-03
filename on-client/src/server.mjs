@@ -19,6 +19,7 @@ import {createProjectScanner} from './vulnerabilities/project-scan.mjs';
 import {buildLocalLearnerSupportGuide,isLearnerSupportProblemKind,readLocalLearnerSupportObservation} from './learner-support/service.mjs';
 import {nativeOwn,nativePublicError} from './connection/native-login.mjs';
 import {readPcStatus} from '../student/pc-status.mjs';
+import {readPcSecurity} from '../student/pc-security.mjs';
 import {createNativeHostContext,captureNativeHostConfiguration,readNativeHostConfiguration,openNativeHostOperation,readNativeHostOperation,assertNativeHostOperation,createNativeOperationVault,closeNativeHostOperation} from './connection/native-context.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
@@ -691,7 +692,9 @@ export function createOnServer(serverOptions={}) {
         }finally{closeNativeHostOperation(nativeOperation);}
       }
       // 학생 구현(완성본 2일차): 이 PC 의 CPU·메모리·디스크를 일반 권한으로 한 번 잰 값. 기존 서버·에이전트 연결과 무관하다.
-      if(req.method==='GET'&&url.pathname==='/api/pc-status'){send(200,{ok:true,data:await readPcStatus()});return;}
+      // 완성본 3일차: 연결·방화벽·Windows 기록 건수는 읽기만 한다(student/pc-security.mjs). 설정은 바꾸지 않는다.
+      const pcReaders=new Map([['/api/pc-status',readPcStatus],['/api/pc-security',readPcSecurity]]);
+      if(req.method==='GET'&&pcReaders.has(url.pathname)){send(200,{ok:true,data:await pcReaders.get(url.pathname)()});return;}
       if(req.method==='GET'&&url.pathname==='/api/diagnostics'){
         // 자동 호출이나 비밀 원문·전체 설정 출력 없이 로컬 연결 상태만 진단한다.
         const info=(mappedAi??defaultAi).connectionInfo();

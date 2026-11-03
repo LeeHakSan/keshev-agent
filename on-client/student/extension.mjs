@@ -494,6 +494,8 @@ const PC_REASON_TEXT = Object.freeze({
   NOT_FOUND: '읽을 위치를 찾지 못했습니다.',
   READ_FAILED: '값을 읽지 못했거나 믿을 수 없는 값이라 쓰지 않았습니다.',
   UNVERIFIED: '서버 응답의 형식을 확인할 수 없어 쓰지 않았습니다.',
+  WINDOWS_ONLY: '이 항목은 Windows 에서만 읽습니다.',
+  TIMEOUT: '읽는 데 시간이 너무 오래 걸려 중단했습니다.',
 });
 const pcState = { api: null, onChange: null, phase: 'idle', seq: 0, errorCode: null, history: [] };
 
@@ -533,28 +535,29 @@ function pcSample(data) {
 }
 
 // 요청은 한 번에 하나만 하고, 더 새 요청이 시작되면 예전 응답은 버립니다.
-function pcMeasure(redraw) {
-  if (pcState.api === null || pcState.phase === 'loading') return;
-  const seq = ++pcState.seq;
-  pcState.phase = 'loading';
-  pcState.errorCode = null;
-  if (redraw) pcState.onChange?.();
-  Promise.resolve(pcState.api.get('/api/pc-status')).then((result) => {
-    if (seq !== pcState.seq) return;
-    const sample = result?.ok === true ? pcSample(result.data) : null;
+function pcRequest(state, path, parse, max, redraw) {
+  if (state.api === null || state.phase === 'loading') return;
+  const seq = ++state.seq;
+  state.phase = 'loading';
+  state.errorCode = null;
+  if (redraw) state.onChange?.();
+  Promise.resolve(state.api.get(path)).then((result) => {
+    if (seq !== state.seq) return;
+    const sample = result?.ok === true ? parse(result.data) : null;
     if (sample !== null) {
-      pcState.history = [sample, ...pcState.history].slice(0, PC_HISTORY_MAX);
-      pcState.phase = 'done';
+      state.history = [sample, ...state.history].slice(0, max);
+      state.phase = 'done';
     } else {
-      pcState.errorCode = result?.ok === false ? aiSafeCode(result.error) ?? 'UNVERIFIED' : 'UNVERIFIED';
-      pcState.phase = 'error';
+      state.errorCode = result?.ok === false ? aiSafeCode(result.error) ?? 'UNVERIFIED' : 'UNVERIFIED';
+      state.phase = 'error';
     }
   }).catch(() => {
-    if (seq !== pcState.seq) return;
-    pcState.errorCode = 'UNVERIFIED';
-    pcState.phase = 'error';
-  }).then(() => { if (seq === pcState.seq) pcState.onChange?.(); });
+    if (seq !== state.seq) return;
+    state.errorCode = 'UNVERIFIED';
+    state.phase = 'error';
+  }).then(() => { if (seq === state.seq) state.onChange?.(); });
 }
+const pcMeasure = (redraw) => pcRequest(pcState, '/api/pc-status', pcSample, PC_HISTORY_MAX, redraw);
 
 // 직전 측정과 비교합니다. 둘 중 하나라도 확인 불가면 비교하지 않습니다.
 function pcDelta(current, previous, read, format) {
@@ -665,11 +668,122 @@ function pcStatusSection() {
   return section;
 }
 
+// ---------- 완성본 3일차: 연결과 기록 (네트워크·방화벽·Windows 기록 건수. 읽기만 하고 설정은 바꾸지 않음) ----------
+// 값은 서버(GET /api/pc-security)가 이 서버를 실행한 PC 에서 읽은 것입니다. 예제(demo) 자료가 아닙니다.
+// 경고·오류 건수는 침해·공격 탐지 결과가 아닙니다. SDP 연결 상태는 PC 조회 결과와 섞지 않고 따로 보여 줍니다.
+const SEC_PLATFORM_TEXT = Object.freeze({ darwin: 'macOS', win32: 'Windows', linux: 'Linux' });
+const SEC_KIND_TEXT = Object.freeze({ wired: '유선', wireless: '무선', unknown: '종류 확인 불가' });
+const SEC_SDP_TEXT = Object.freeze({
+  connected: 'SDP 서버: 연결됨(connected). 서버가 알려 준 연결 상태이며, 이 화면이 SDP 서버를 따로 확인한 것은 아닙니다.',
+  disconnected: 'SDP 서버: SDP 미연결(disconnected).',
+  demo: 'SDP 서버: 예제(demo) 자료입니다. 실제 SDP 서버에 연결된 것이 아닙니다.',
+  unknown: 'SDP 서버: 확인 불가(unknown).',
+});
+const secState = { api: null, onChange: null, phase: 'idle', seq: 0, errorCode: null, history: [] };
+
+const secName = (value) => (typeof value === 'string' && /^[\p{L}\p{N} _.:()-]{1,40}$/u.test(value) ? value : null);
+const secCount = (value) => Number.isInteger(value) && value >= 0 && value <= 10_000_000;
+const secLog = (raw) => pcMetric(raw, (e) => secCount(e.errors) && secCount(e.warnings) && pcFinite(e.windowHours) && e.windowHours > 0,
+  (e) => ({ errors: e.errors, warnings: e.warnings, windowHours: e.windowHours }));
+
+function secSample(data) {
+  if (data === null || typeof data !== 'object' || data.source !== 'measured') return null;
+  return {
+    platform: Object.hasOwn(SEC_PLATFORM_TEXT, data.platform) ? data.platform : null,
+    network: pcMetric(data.network,
+      (n) => typeof n.connected === 'boolean' && Array.isArray(n.interfaces) && n.interfaces.length <= 8
+        && n.interfaces.every((i) => i !== null && typeof i === 'object' && Object.hasOwn(SEC_KIND_TEXT, i.kind)),
+      (n) => ({ connected: n.connected, interfaces: n.interfaces.map((i) => ({ name: secName(i.name), kind: i.kind })) })),
+    firewall: pcMetric(data.firewall,
+      (f) => Array.isArray(f.profiles) && f.profiles.length >= 1 && f.profiles.length <= 6
+        && f.profiles.every((p) => p !== null && typeof p === 'object' && (typeof p.enabled === 'boolean' || p.enabled === null)),
+      (f) => ({ profiles: f.profiles.map((p) => ({ name: secName(p.name), enabled: p.enabled })) })),
+    system: secLog(data.events?.system),
+    application: secLog(data.events?.application),
+  };
+}
+const secLoad = (redraw) => pcRequest(secState, '/api/pc-security', secSample, 1, redraw);
+
+function secRow(table, label, metric, valueText, detail, platform) {
+  const row = identityNode('tr');
+  row.append(identityNode('th', label));
+  row.lastChild.setAttribute('scope', 'row');
+  row.append(identityNode('td', metric.ok ? valueText : '확인 불가'));
+  row.append(identityNode('td', metric.time ?? '확인 불가'));
+  let reason = detail;
+  if (!metric.ok) {
+    reason = metric.reason === 'WINDOWS_ONLY'
+      ? `이 항목은 Windows 에서만 읽습니다. 서버가 실행 중인 PC(${SEC_PLATFORM_TEXT[platform] ?? '운영체제 확인 불가'})에서는 읽지 않았습니다.`
+      : PC_REASON_TEXT[metric.reason];
+  }
+  row.append(identityNode('td', reason));
+  table.append(row);
+}
+
+function secTable(sample) {
+  const table = identityNode('table', undefined, 'student-sec-table');
+  const head = identityNode('tr');
+  for (const title of ['항목', '값', '읽은 시각', '설명']) {
+    head.append(identityNode('th', title));
+    head.lastChild.setAttribute('scope', 'col');
+  }
+  table.append(head);
+  const { network, firewall, system, application, platform } = sample;
+  secRow(table, '네트워크 연결', network,
+    network.ok ? (network.connected ? `연결됨 · ${network.interfaces.map((i) => `${i.name ?? '이름 확인 불가'}(${SEC_KIND_TEXT[i.kind]})`).join(', ')}` : '연결 안 됨') : '',
+    '이 PC 의 인터페이스에 IPv4 설정이 있는지만 봅니다. 인터넷에 실제로 닿는지는 확인하지 않았습니다. IP·MAC 주소는 보여 주지 않습니다.', platform);
+  const anyOff = firewall.ok && firewall.profiles.some((p) => p.enabled === false);
+  secRow(table, '방화벽 설정', firewall,
+    firewall.ok ? `${anyOff ? '주의 · ' : ''}${firewall.profiles.map((p) => `${p.name ?? '이름 확인 불가'} ${p.enabled === true ? '켜짐' : p.enabled === false ? '꺼짐' : '확인 불가'}`).join(' · ')}` : '',
+    '읽기만 했고 설정은 바꾸지 않았습니다.', platform);
+  for (const [label, metric] of [['Windows System 기록', system], ['Windows Application 기록', application]]) {
+    secRow(table, label, metric, metric.ok ? `오류 ${metric.errors}건 · 경고 ${metric.warnings}건 (최근 ${metric.windowHours}시간)` : '',
+      '침해나 공격 탐지 결과가 아닙니다. 기록의 개수일 뿐이며 기록 내용은 읽지 않았습니다.', platform);
+  }
+  return pcStyleTable(table);
+}
+
+function securitySection(mode) {
+  if (secState.phase === 'idle') secLoad(false);
+  const section = identityNode('section', undefined, 'student-sec-status');
+  section.setAttribute('aria-label', '연결과 기록');
+  section.append(identityNode('h4', '연결과 기록'));
+  section.append(identityNode('p', '실측값: 이 서버를 실행한 PC 에서 읽기만 한 값입니다. 방화벽·보안 설정은 바꾸지 않고, 관리자 권한이 필요한 항목은 읽지 않습니다. 예제(demo) 자료와 다릅니다.', 'student-pc-note'));
+  section.append(identityNode('p', '주의: 경고·오류 건수는 운영체제가 남긴 기록의 개수일 뿐이며, 침해나 공격을 탐지한 결과가 아닙니다.', 'student-sec-warning'));
+  // PC 조회 결과와 섞지 않는 SDP 연결 상태
+  const sdp = identityNode('div', undefined, 'student-sdp');
+  sdp.append(identityNode('p', SEC_SDP_TEXT[Object.hasOwn(SEC_SDP_TEXT, mode) ? mode : 'unknown'], 'student-sdp-state'));
+  sdp.append(identityNode('p', 'SDP 연결 상태는 아래 PC 조회 결과와 별개입니다. SDP 가 연결되지 않아도 아래 값은 이 PC 에서 읽은 실측값이고, PC 조회가 성공했다고 SDP 가 연결된 것은 아닙니다.', 'student-pc-scope'));
+  section.append(sdp);
+  if (secState.api === null) {
+    section.append(identityNode('p', '확인 불가: 읽기를 요청할 통로가 없어 읽지 않았습니다.', 'student-pc-error'));
+    return section;
+  }
+  if (secState.phase === 'error') {
+    section.append(identityNode('p', `확인 불가: 이 PC 의 연결·기록을 받지 못했습니다. (오류 코드: ${secState.errorCode})`, 'student-pc-error'));
+  }
+  const latest = secState.history[0];
+  if (latest === undefined) {
+    if (secState.phase === 'loading') section.append(identityNode('p', '읽는 중입니다…', 'student-pc-loading'));
+  } else {
+    if (secState.phase === 'loading') section.append(identityNode('p', '다시 읽는 중입니다. 아래는 직전에 읽은 값입니다.', 'student-pc-loading'));
+    section.append(secTable(latest));
+  }
+  section.append(identityNode('p', '화면을 열 때 한 번 읽고, 그 뒤에는 아래 버튼을 직접 누를 때만 읽습니다.', 'student-pc-scope'));
+  const button = identityNode('button', '연결·기록 다시 읽기');
+  button.type = 'button';
+  if (secState.phase === 'loading') button.disabled = true;
+  button.addEventListener('click', () => secLoad(true));
+  section.append(button);
+  return section;
+}
+
 function statusView(input) {
   const { devices, sessions, notifications, diagnostics, mode } = input !== null && typeof input === 'object' ? input : {};
   const root = identityNode('section', undefined, 'student-status');
   root.setAttribute('aria-label', '기기·세션·알림·도움정보');
   root.append(pcStatusSection());
+  root.append(securitySection(typeof mode === 'string' ? mode : null));
   const topMode = typeof mode === 'string' ? mode : null;
   if (topMode !== null && Object.hasOwn(STATUS_MODE_NOTICE, topMode)) root.append(identityNode('p', STATUS_MODE_NOTICE[topMode], 'student-status-mode'));
   root.append(statusGroup('기기', '기기 정보', statusResource(devices), topMode, '등록된 기기가 없습니다.', (rows) => statusList(rows, (device) => `${identityNamed(device)} · ${identityStatus(DEVICE_STATUS_TEXT, device?.status)}`)));
@@ -1181,6 +1295,10 @@ export function createStudentView(host) {
     api: typeof host?.api?.get === 'function' ? host.api : null,
     onChange: typeof host?.onChange === 'function' ? host.onChange : null,
     phase: 'idle', seq: pcState.seq + 1, errorCode: null, history: [],
+  });
+  Object.assign(secState, {
+    api: pcState.api, onChange: pcState.onChange,
+    phase: 'idle', seq: secState.seq + 1, errorCode: null, history: [],
   });
   return {
     renderIdentity(input) {
