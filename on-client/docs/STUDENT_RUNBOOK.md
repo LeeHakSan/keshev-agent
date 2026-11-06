@@ -12,14 +12,14 @@
 | 항목 | 값 | 확인 여부 |
 |---|---|---|
 | Node.js | v24.22.0 (`node -v`) | 확인함. 이 버전으로 서버 시작·화면 조회를 했습니다 |
-| 수업 기준 버전 | `package.json`의 `engines.node` 와 제공 문서는 24.19.0 (수업 기준·권장) | 이 PC의 Node 는 24.22.0 이라 24.19.0 에서는 실행해 보지 않았습니다. **미확인** |
-| 실행 도구가 허용하는 범위 | `tools/start-alekov.ps1` 은 Node 22~24 에서 실행을 허용하고, 24.19.0 이 아니면 참고 문구만 냅니다 | 코드를 읽어 확인함. 이 범위 안의 다른 버전(22.x, 23.x, 24.19.0 등)에서 실제로 실행해 본 적은 없습니다. **미확인** |
+| 수업 기준 버전 | `package.json`의 `engines.node` 와 제공 문서는 24.19.0 (수업 기준·권장) | Mac 의 Node 는 24.22.0 이라 거기서는 24.19.0 을 쓰지 않았습니다. 2026-11-06 Windows 11 의 Node v24.19.0 에서는 실행해 확인함 (`npm run check`, `npm run demo`, 화면 응답) |
+| 실행 도구가 허용하는 범위 | `tools/start-alekov.ps1` 은 Node 22~24 에서 실행을 허용하고, 24.19.0 이 아니면 참고 문구만 냅니다 | 코드를 읽어 확인함. 이 범위 안에서 실제로 실행한 버전은 24.22.0(Mac)과 24.19.0(Windows 11)뿐이고, 22.x·23.x 는 실행해 본 적이 없습니다. **22.x·23.x 는 미확인** |
 | npm | 11.19.1 (`npm -v`) | 확인함. 외부 npm 의존성은 없어 `npm install`이 필요 없습니다 |
 | Git | 2.50.1 | 확인함 |
 | 운영체제 | macOS (Darwin 25.6.0), 셸 zsh | 확인함. 아래 3~5장의 명령은 이 환경에서 실행했습니다 |
-| Windows PowerShell | 제공 시작 틀의 `tools/start-alekov.ps1` | 이 PC가 Mac 이라 실행하지 못했습니다. **미확인** |
+| Windows PowerShell | 제공 시작 틀의 `tools/start-alekov.ps1` | Windows 11(Node v24.19.0, 2026-11-06)에서 `-Demo -Background -Port 5192` 로 실행해 200 응답, 포트 사용 중 안내, 종료 뒤 포트 비워짐을 확인함. **`-Demo` 없이 쓰는 경로(사용자 홈에 계정 연결 폴더를 만듦)와 `Ctrl+C` 로 끄는 앞쪽 실행은 미확인** |
 | 브라우저 | Chrome (화면 확인에 사용) | 확인함 |
-| 확인하지 않은 환경 | Node 24.22.0 외의 모든 버전(수업 기준 24.19.0 과 도구 허용 범위 22~24 포함), Windows, Chrome 외 브라우저 | 실행해 보지 않았으므로 동작한다고도, 동작하지 않는다고도 적지 않습니다. **미확인** |
+| 확인하지 않은 환경 | Node 22.x·23.x, Chrome 외 브라우저, Windows 의 다른 설정(도메인 가입 PC 등)과 `-Demo` 없는 `start-alekov.ps1` 경로 | 실행해 보지 않았으므로 동작한다고도, 동작하지 않는다고도 적지 않습니다. **미확인** |
 | 허용 범위 밖 | Node 22 미만 또는 25 이상 | 실행 도구가 시작을 막는다고 코드에 쓰여 있으나 실행해 보지 않았습니다. **미확인** |
 
 ## 3. 폴더 구조와 작업 위치
@@ -66,7 +66,7 @@ keshev-agent/                      ← Git 최상위 (원격: https://github.com
 5. 종료: 서버가 켜진 터미널에서 `Ctrl+C`. 종료 뒤 같은 주소가 응답하지 않으면 종료된 것입니다. `Ctrl+C` 와 같은 신호(`SIGINT`)를 서버에 보내 확인했습니다: 프로세스가 바로 끝났고(종료 코드 130, `Ctrl+C` 로 끝났을 때의 정상 값) 포트가 비워졌습니다. 키보드로 직접 누른 것은 아니라서 그 부분은 **미확인**입니다. 다른 프로세스를 이름으로 한꺼번에 끄는 명령(`pkill` 등)은 안내하지 않습니다.
 6. 재실행: 2번을 다시 실행합니다. 서버를 다시 켠 뒤 브라우저를 새로고침하면 화면 상태가 처음(조회 전)으로 돌아갑니다.
 
-제공 문서가 안내하는 Windows 방식(`powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`)은 **이 PC에서 실행하지 못해 확인하지 않았습니다.**
+제공 문서가 안내하는 Windows 방식(`powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1`)은 2026-11-06 Windows 11 에서 `-Demo -Background -Port 5192` 를 붙여 실행해 확인했습니다(200 응답, 같은 포트 재실행 시 안내 문구, 종료 뒤 포트 비워짐). `-Demo` 없이 실행하면 이 스크립트가 사용자 홈 폴더에 `.aleph-keshev-…` 폴더를 만들므로 그 경로는 실행하지 않았고 **미확인**입니다.
 
 ### 설정과 비밀값
 
@@ -174,7 +174,7 @@ flowchart LR
 
 | 화면·응답에 보이는 것 | 의미 | 확인 순서 | 이 PC에서 본 적 있는가 |
 |---|---|---|---|
-| `Error: listen EADDRINUSE … 127.0.0.1:5189` (터미널의 긴 오류) | 같은 포트에서 앱이 이미 켜져 있음 (이전에 켠 것을 끄지 않음) | 먼저 켠 터미널에서 `Ctrl+C`. 못 찾으면 `ON_PORT=5190 npm run demo` 로 다른 번호에 켜고 주소를 `5190` 으로 엽니다 | 봄 (새 폴더에서 두 번째로 켰을 때 그대로 나옴). `ON_PORT` 방법은 Mac 에서 확인, Windows 는 **미확인** |
+| `Error: listen EADDRINUSE … 127.0.0.1:5189` (터미널의 긴 오류) | 같은 포트에서 앱이 이미 켜져 있음 (이전에 켠 것을 끄지 않음) | 먼저 켠 터미널에서 `Ctrl+C`. 못 찾으면 `ON_PORT=5190 npm run demo` 로 다른 번호에 켜고 주소를 `5190` 으로 엽니다 | 봄 (새 폴더에서 두 번째로 켰을 때 그대로 나옴). `ON_PORT` 방법은 Mac 과 Windows 11 PowerShell(`$env:ON_PORT=5190; npm run demo`)에서 확인 |
 | `npm error enoent Could not read package.json` | `on-client` 가 아닌 폴더에서 명령을 실행함 | `cd on-client` 로 들어가 `package.json` 이 보이는지 확인 | 봄 (`keshev-agent` 에서 실행했을 때) |
 | `ENGINE_NOT_CONNECTED` ("기존 서버·에이전트의 연결을 확인할 수 없습니다") | 접근 제어·XDR 연동이 연결되지 않음 (`npm start` 기본 상태) | ① 서버 터미널의 시작 문구 확인 ② 담당자 안내에 따른 연결 구성 확인 ③ `docs/CONNECTION_TROUBLESHOOT.md` | 봄 (`GET /api/me` 응답) |
 | 화면의 "연결 실패" / "연결 없음(disconnected)" | 서버가 꺼졌거나 연결 없음 | ① 서버가 켜져 있는지 ② `http://127.0.0.1:5189` 응답 ③ 서버 재실행 후 「다시 불러오기」 | 봄 (서버를 끄고 확인) |

@@ -318,7 +318,7 @@
 ## 미확인
 
 - **처음 보는 사람이 직접 따라 한 결과** (가장 중요한 미확인).
-- Windows(PowerShell, `tools/start-alekov.ps1`, `$env:ON_PORT=5190` 방법), Node 24.19.0·22.x·23.x, Git 없이 ZIP 으로 받기, 다른 사용자 계정.
+- ~~Windows(PowerShell, `tools/start-alekov.ps1`, `$env:ON_PORT=5190` 방법), Node 24.19.0~~ → **2026-11-06 Windows 11·Node v24.19.0 에서 확인함**(맨 아래 「Windows 5일차 재현」). 아직 미확인: Node 22.x·23.x, Git 없이 ZIP 으로 받기, 다른 사용자 계정.
 - `Ctrl+C` 를 키보드로 직접 누르는 것(신호로만 확인).
 
 ---
@@ -347,9 +347,31 @@
 **이번에 고친 것:** 표 테두리 색이 `#d0d7de` 로 하드코딩돼 있어(`student/extension.mjs`) 4일차 문서의 "색은 `var(--...)` 만 사용"이 사실과 달랐습니다. `var(--border)` 로 바꿔 문서와 맞췄습니다.
 
 **아직 미확인 (Windows):**
-- `tools/start-alekov.ps1` 로 켜는 방법과 `$env:ON_PORT=5190` 방법.
+- `-Demo` 없이 `tools/start-alekov.ps1` 를 실행하는 경로(사용자 홈에 `.aleph-keshev-…` 계정 연결 폴더를 만들어 실행하지 않음)와 `Ctrl+C` 로 끄는 앞쪽 실행. (`-Demo -Background` 와 `$env:ON_PORT=5190` 방법은 아래 「Windows 5일차 재현」에서 확인함)
 - 이벤트 뷰어 화면과 건수를 눈으로 비교한 것(PowerShell 로 센 값과 비교함).
 - 낭독기, 실제 창 크기를 줄인 모바일 폭, `TIMEOUT`·`NOT_FOUND` 조회 실패 화면.
 - 처음 보는 사람이 안내만 보고 따라 한 결과.
 - 한 대의 PC 결과입니다. 도메인 가입 PC 등 다른 Windows 설정은 확인하지 않았습니다.
 - 「네트워크 연결」 줄에는 VMware·WSL·OpenVPN 같은 가상 어댑터도 함께 나옵니다. 인터페이스에 IPv4 설정이 있다는 뜻이며 인터넷 연결 여부가 아닙니다.
+
+---
+
+# Windows 5일차 재현 (2026-11-06)
+
+**환경:** Windows 11 · PowerShell · Node v24.19.0(수업 기준) · npm 12.1.0 · Git 2.55.0. 기존 프로젝트 폴더가 아닌 **새 빈 폴더**(파일 0개)에 GitHub 저장소를 받아 `README.md` 순서대로 따라 했고, 코드는 고치지 않았습니다. 받은 커밋은 `38ff8b1` 입니다. 작성자가 한 것이라 처음 보는 사람의 결과는 아닙니다.
+
+| README 단계 | 결과 |
+|---|---|
+| 1. `git clone https://github.com/LeeHakSan/keshev-agent.git` | 성공(종료 코드 0). 최상위에 `README.md` 와 `on-client` |
+| 2. `cd keshev-agent\on-client` | `package.json` 보임 |
+| 3. `npm run check` | 종료 코드 0 |
+| 4. `npm run demo` | `케셰브 예제: http://127.0.0.1:5189` (파이프로 받으면 한글이 깨져 보였으나 UTF-8 로 읽으면 정상. 앱 출력 문제 아님) |
+| 5. 화면 | `GET /` 200, `/api/pc-status` 200 |
+| 6. 끄기 | 프로세스 종료 뒤 포트 비워짐 (키보드 `Ctrl+C` 로 직접 누르지는 않음) |
+| 막혔을 때 표 | `keshev-agent` 에서 실행 → `npm error code ENOENT … package.json`, 두 번 켜기 → `EADDRINUSE`, PowerShell `$env:ON_PORT=5190; npm run demo` → 5190 에서 200. 표에 적은 대로 재현됨 |
+
+**`tools\start-alekov.ps1` (`-Demo -Background -Port 5192`):** 문서의 명령 형태(`powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1 …`)로 실행했습니다. 「케셰브가 켜졌습니다」가 나오고 `/` 200, `/api/pc-status` 가 `measured`. 같은 포트로 다시 실행하면 「포트 5192 를 다른 프로그램이 쓰고 있습니다 … 예: -Port 5193」 안내와 종료 코드 1. 서버를 끈 뒤 포트가 비었고, 실행 정책(CurrentUser `RemoteSigned`)은 바뀌지 않았습니다.
+
+**실행하지 않은 것:** `-Demo` 없이 이 스크립트를 쓰면 `prepare-native-host.ps1` 이 사용자 홈에 `.aleph-keshev-<해시>` 폴더와 계정 연결 설정을 만듭니다. 이 PC 에 남는 변경이라 확인 없이 실행하지 않았고(실행 전후 홈의 해당 폴더 수는 0개로 같음), 그 경로는 **미확인**입니다.
+
+**아직 미확인:** 처음 보는 사람이 따라 한 결과, Node 22.x·23.x, ZIP 으로 받기, `Ctrl+C` 를 키보드로 직접 누르는 것.

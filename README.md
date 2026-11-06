@@ -70,7 +70,7 @@ npm run demo
 |---|---|---|
 | `node: command not found` / `'node'은(는) 인식되지 않습니다` | Node.js 가 없음 | https://nodejs.org 에서 설치한 뒤 터미널을 **새로** 열고 `node -v` |
 | `npm error enoent Could not read package.json` | 폴더를 잘못 들어옴 (`keshev-agent` 에서 실행하면 이렇게 나옵니다) | `cd on-client` 로 한 번 더 들어간 뒤 `package.json` 이 보이는지 확인하고 다시 실행 |
-| `Error: listen EADDRINUSE … 127.0.0.1:5189` (긴 오류) | **이미 앱이 켜져 있음** (예전에 켠 것) | 먼저 켠 터미널을 찾아 `Ctrl+C`. 못 찾으면 다른 번호로 켭니다: Mac `ON_PORT=5190 npm run demo` 후 주소를 `5190` 으로. Windows PowerShell `$env:ON_PORT=5190; npm run demo` (이 방법은 Windows 에서 확인하지 못했습니다) |
+| `Error: listen EADDRINUSE … 127.0.0.1:5189` (긴 오류) | **이미 앱이 켜져 있음** (예전에 켠 것) | 먼저 켠 터미널을 찾아 `Ctrl+C`. 못 찾으면 다른 번호로 켭니다: Mac `ON_PORT=5190 npm run demo` 후 주소를 `5190` 으로. Windows PowerShell `$env:ON_PORT=5190; npm run demo` (Windows 11 PowerShell 에서 확인함) |
 | 브라우저 "연결할 수 없음" | 앱이 꺼져 있음 | 터미널에 `케셰브 …: http://127.0.0.1:5189` 가 있는지 보고, 없으면 4번 |
 | 화면이 예전 모양이거나 `NOT_FOUND`, "지원하지 않는 주소입니다" | **예전 코드로 켜진 앱**이 아직 떠 있음 | `Ctrl+C` 로 끄고 4번부터 다시 |
 | 빨간 「연결 없음」 | `npm start` 에서는 정상 | 화면을 보려면 `npm run demo` |
@@ -86,8 +86,9 @@ npm run demo
 |---|---|
 | macOS · Node v24.22.0 · npm 11.19.1 · Git 2.50.1 · Chrome | **확인함.** 새 빈 폴더에 저장소를 받아 위 순서대로 실행했습니다 (`npm run check`, `npm start`, `npm run demo`, `Ctrl+C` 와 같은 `SIGINT` 로 종료, 같은 포트 두 번 켜기) |
 | 다른 사람이 안내만 보고 따라 한 결과 | **미확인.** 위 확인은 작성자가 한 것입니다 |
-| Windows (PowerShell, `tools/start-alekov.ps1`) | **미확인.** 제공 안내는 `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1` 이지만 실행해 보지 못했습니다 |
-| Node 24.19.0 / 22.x / 23.x | **미확인** |
+| Windows 11 · Node v24.19.0 · npm 12.1.0 · Git 2.55.0 (2026-11-06) | **확인함.** 새 빈 폴더에 저장소를 받아 6단계(`npm run check`, `npm run demo`, 화면 응답, 종료)와 「막혔을 때」 표의 `package.json` 오류·`EADDRINUSE`·PowerShell `ON_PORT=5190` 을 그대로 재현했습니다 |
+| Windows `tools\start-alekov.ps1` | **일부 확인.** `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\start-alekov.ps1 -Demo -Background -Port 5192` 로 켜져 200 응답, 같은 포트 재실행 시 「포트 5192 를 다른 프로그램이 쓰고 있습니다」 안내, 종료 뒤 포트 비워짐. **`-Demo` 없이 실행하면 사용자 홈 폴더에 `.aleph-keshev-…` 계정 연결 폴더를 만드는 경로는 실행하지 않았습니다.** 앞쪽(`Ctrl+C` 로 끄는) 실행도 확인하지 않았습니다 |
+| Node 22.x / 23.x | **미확인** |
 | Git 없이 GitHub 의 「Download ZIP」으로 받기 | **미확인** |
 
 ## 더 읽을 곳
