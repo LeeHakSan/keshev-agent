@@ -590,7 +590,7 @@ function pcStyleTable(table) {
       cell.style.padding = '6px 10px';
       cell.style.textAlign = 'left';
       cell.style.verticalAlign = 'top';
-      cell.style.borderBottom = '1px solid #d0d7de';
+      cell.style.borderBottom = '1px solid var(--border)';
     }
   }
   return table;
