@@ -95,4 +95,5 @@ npm run demo
 
 - 자세한 설명서(구성도·오류 표·미확인 목록): [`on-client/docs/STUDENT_RUNBOOK.md`](on-client/docs/STUDENT_RUNBOOK.md)
 - 단계별 기능 점검과 같은 결과를 다시 만드는 순서: [`on-client/docs/STUDENT_FEATURE_CHECKLIST.md`](on-client/docs/STUDENT_FEATURE_CHECKLIST.md)
+- 완성본 시연 순서·한계·근거(제출 정리): [`on-client/docs/FINAL_DEMO_RECORD.md`](on-client/docs/FINAL_DEMO_RECORD.md)
 - 제공 시작 틀(0.2.14) 안내: `on-client/README.md`, `on-client/docs/STUDENT_LAUNCH_GUIDE.md`
